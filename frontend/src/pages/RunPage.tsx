@@ -332,7 +332,7 @@ export function RunPage({ onFinished }: { onFinished: (projectPath: string) => v
 
               {job.status === "done" && (
                 <div className="flex items-center gap-2 text-sm">
-                  <CheckCircle2 className="size-4 text-emerald-500" />
+                  <CheckCircle2 className="text-success size-4" />
                   <span>完成 {job.completed} 页</span>
                   {reviewTotal > 0 && (
                     <span className="text-muted-foreground flex items-center gap-1">

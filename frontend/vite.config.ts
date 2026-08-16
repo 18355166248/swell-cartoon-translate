@@ -10,6 +10,10 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Bind IPv4 explicitly. Vite's default listens on ::1 only, so anything
+    // that resolves "localhost" to 127.0.0.1 -- curl, some browsers, most
+    // health checks -- gets ECONNREFUSED against a server that is running.
+    host: "127.0.0.1",
     // The backend serves images straight off local disk, so the UI is same
     // origin in dev and needs no CORS handling of its own.
     proxy: {

@@ -102,31 +102,36 @@ export function ResultsPage({ projectPath }: { projectPath: string }) {
 
   if (!project) {
     return (
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">打开项目</CardTitle>
-        </CardHeader>
-        <CardContent className="flex gap-2">
-          <Input
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && void open(path)}
-            placeholder="out\project.cttproj"
-            className="font-mono text-xs"
-          />
-          <Button onClick={() => void open(path)} disabled={busy || !path}>
-            {busy ? <Loader2 className="size-4 animate-spin" /> : "打开"}
-          </Button>
-        </CardContent>
-      </Card>
+      <div className="h-full overflow-y-auto">
+        <div className="mx-auto max-w-[1400px] p-5">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">打开项目</CardTitle>
+            </CardHeader>
+            <CardContent className="flex gap-2">
+              <Input
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void open(path)}
+                placeholder="out\project.cttproj"
+                className="font-mono text-xs"
+              />
+              <Button onClick={() => void open(path)} disabled={busy || !path}>
+                {busy ? <Loader2 className="size-4 animate-spin" /> : "打开"}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     );
   }
 
   const reviewCount = blocks.filter((b) => reviewReasons(b).length > 0).length;
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="flex h-full flex-col">
+      {/* Toolbar stays put; only the two panes below it scroll. */}
+      <div className="border-border flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-5 py-2.5">
         <div className="flex items-center gap-2">
           <Button
             variant="secondary" size="icon" className="size-8"
@@ -164,26 +169,26 @@ export function ResultsPage({ projectPath }: { projectPath: string }) {
         </div>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[1fr_380px]">
-        <Card className="overflow-hidden py-0">
-          <div className="bg-black/40">
-            <img
-              key={`${pageIndex}-${showOriginal}-${nonce}`}
-              src={api.renderUrl(pageIndex, showOriginal, nonce)}
-              alt={`第 ${pageIndex + 1} 页`}
-              className="max-h-[75vh] w-full object-contain"
-            />
-          </div>
+      <div className="grid min-h-0 flex-1 gap-3 p-3 lg:grid-cols-[1fr_380px]">
+        {/* Its own scroller: a long webtoon strip is 14000px tall, so the
+            image has to scroll without dragging the whole layout with it. */}
+        <Card className="bg-viewer min-h-0 overflow-auto py-0">
+          <img
+            key={`${pageIndex}-${showOriginal}-${nonce}`}
+            src={api.renderUrl(pageIndex, showOriginal, nonce)}
+            alt={`第 ${pageIndex + 1} 页`}
+            className="mx-auto block max-w-full"
+          />
         </Card>
 
-        <Card className="flex flex-col">
-          <CardHeader className="pb-2">
+        <Card className="flex min-h-0 flex-col">
+          <CardHeader className="shrink-0 pb-2">
             <CardTitle className="text-base">
               对白 <span className="text-muted-foreground font-normal">({blocks.length})</span>
             </CardTitle>
           </CardHeader>
-          <CardContent className="flex-1 p-0">
-            <ScrollArea className="h-[68vh]">
+          <CardContent className="min-h-0 flex-1 p-0">
+            <ScrollArea className="h-full">
               <div className="space-y-3 p-4 pt-0">
                 {blocks.map((block) => {
                   const reasons = reviewReasons(block);
@@ -217,7 +222,7 @@ export function ResultsPage({ projectPath }: { projectPath: string }) {
                         onBlur={() => void applyEdit(block)}
                         rows={2}
                         className={`border-input bg-background w-full resize-y rounded-md border px-2 py-1.5 text-sm ${
-                          reasons.length ? "border-amber-500/50" : ""
+                          reasons.length ? "border-warning/60" : ""
                         }`}
                       />
                       {changed && (

@@ -1,9 +1,25 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>漫画汉化</title>
+    <script>
+      // Runs before first paint. Applying the theme from React instead would
+      // render one frame in the wrong palette on every load.
+      (function () {
+        try {
+          var stored = localStorage.getItem("ctt-theme") || "system";
+          var dark =
+            stored === "dark" ||
+            (stored === "system" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (e) {
+          /* private mode: fall back to light */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
