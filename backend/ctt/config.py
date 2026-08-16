@@ -172,6 +172,111 @@ def _merge(target: Any, data: dict[str, Any], path: str = "") -> list[str]:
     return unknown
 
 
+def describe(obj: Any = None, path: str = "") -> list[dict[str, Any]]:
+    """Flatten a Config into field descriptors for a generated UI.
+
+    Reflected from the dataclasses rather than written out by hand, so the
+    settings form cannot drift from the settings that actually exist -- adding
+    a field to a dataclass makes it appear in the UI with no further work.
+    """
+    obj = obj if obj is not None else Config()
+    out: list[dict[str, Any]] = []
+
+    for f in fields(obj):
+        if f.name in {"source_path", "glossary"}:
+            continue
+        value = getattr(obj, f.name)
+        dotted = f"{path}{f.name}"
+
+        if is_dataclass(value):
+            out.extend(describe(value, f"{dotted}."))
+            continue
+
+        if isinstance(value, bool):
+            kind = "bool"
+        elif isinstance(value, int):
+            kind = "int"
+        elif isinstance(value, float):
+            kind = "float"
+        elif isinstance(value, list):
+            kind = "list"
+        else:
+            kind = "str"
+
+        out.append({
+            "path": dotted,
+            "name": f.name,
+            "section": dotted.rsplit(".", 1)[0] if "." in dotted else "",
+            "type": kind,
+            "value": value,
+            "doc": FIELD_DOCS.get(dotted, ""),
+            "choices": FIELD_CHOICES.get(dotted),
+        })
+    return out
+
+
+# Only fields whose correct value is non-obvious. A tooltip on `n_threads`
+# would be noise; one on `n_gpu_layers` prevents someone from unknowingly
+# handing the GPU to the translator while a game is running.
+FIELD_DOCS = {
+    "target_lang": "目标语言。zh-Hans 简体，zh-Hant 繁体",
+    "source_lang": "auto 表示按整页多数字符判定，不逐句猜",
+    "skip_thumbnails": "跳过漫画站附带的小缩略图。实测某话 410 个文件里有 126 个是垃圾图",
+    "detect.threshold": "调低会多检出误报，调高会漏掉小气泡",
+    "slicing.max_height": "切片高度硬上限。这是长条 webtoon 不吃爆显存的关键",
+    "ocr.languages": "多个引擎按识别置信度择优，代价是每个气泡多跑几次",
+    "translate.backends": "按顺序尝试，后面的补前面留下的空缺。nllb 会静默删露骨词汇，成人素材别用",
+    "translate.llamacpp.n_gpu_layers": "0 = 完全不碰显卡，玩游戏不受影响。不玩时可调到 20-30 提速",
+    "translate.llamacpp.n_threads": "建议取物理核数，不是逻辑核数",
+    "typeset.min_size": "小于此字号判定为溢出，标记进 needs_review",
+    "typeset.bubble_inset": "气泡内边距占短边比例。手工排版大约留这么多",
+    "erase.lama_path": "留空则禁用。气泡是纯色底，纯色填充就够了",
+}
+
+FIELD_CHOICES = {
+    "target_lang": ["zh-Hans", "zh-Hant"],
+    "detect.model": ["int8", "fp32", "small"],
+    "typeset.align": ["center", "left", "right"],
+}
+
+
+def to_toml(config: Config) -> str:
+    """Serialise back to ctt.toml.
+
+    Hand-rolled rather than via a library: tomllib is read-only in the stdlib,
+    and this document is small and entirely known.
+    """
+    def fmt(value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (int, float)):
+            return str(value)
+        if isinstance(value, list):
+            return "[" + ", ".join(f'"{v}"' for v in value) + "]"
+        return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    lines = ["# 由 Web 配置页生成。注释见 README。", ""]
+    sections: dict[str, list[str]] = {"": []}
+
+    for field_info in describe(config):
+        section = field_info["section"]
+        sections.setdefault(section, []).append(
+            f'{field_info["name"]} = {fmt(field_info["value"])}'
+        )
+
+    lines.extend(sections.pop("", []))
+    for section, entries in sections.items():
+        lines.append("")
+        lines.append(f"[{section}]")
+        lines.extend(entries)
+
+    if config.glossary:
+        lines.extend(["", "[glossary]"])
+        lines.extend(f'{k} = {fmt(v)}' for k, v in config.glossary.items())
+
+    return "\n".join(lines) + "\n"
+
+
 def find_config(start: Path | None = None) -> Path | None:
     """Search upward from `start` for ctt.toml."""
     here = (start or Path.cwd()).resolve()

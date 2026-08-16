@@ -23,6 +23,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -142,7 +143,17 @@ class Pipeline:
         self.lama = lama
         self.detect_threshold = detect_threshold
 
-    def run_page(self, image_path: str | Path) -> PageResult:
+    def run_page(
+        self,
+        image_path: str | Path,
+        on_stage: Callable[[str], None] | None = None,
+    ) -> PageResult:
+        """Translate one page.
+
+        `on_stage` is called as each stage begins. Stages are opaque blocking
+        calls, so this is the finest progress the pipeline can honestly
+        report -- there is no way to be 40% through an ONNX inference.
+        """
         image_path = Path(image_path)
         image = cv2.imread(str(image_path))
         if image is None:
@@ -150,20 +161,26 @@ class Pipeline:
 
         timings = StageTimings()
         height, width = image.shape[:2]
+        report = on_stage or (lambda _: None)
 
+        report("detect")
         with _timed(timings, "detect"):
             blocks = self.detector.detect(image, threshold=self.detect_threshold)
 
+        report("ocr")
         with _timed(timings, "ocr"):
             self.ocr.run(image, blocks)
 
         translatable = [b for b in blocks if b.translatable]
+        report("translate")
         with _timed(timings, "translate"):
             self._translate(translatable)
 
+        report("erase")
         with _timed(timings, "erase"):
             erased, erase_stats = inpaint.erase(image, blocks, lama=self.lama)
 
+        report("typeset")
         with _timed(timings, "typeset"):
             rendered, overflowed = render_page(erased, translatable)
 

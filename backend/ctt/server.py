@@ -25,7 +25,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from .translate import Glossary
+from .config import CONFIG_NAME as CONFIG_FILE
+from .pipeline import Pipeline
 from .types import Block, Page, Project
 from .typeset import layout_block, render_page
 
@@ -223,4 +224,194 @@ def health() -> dict:
         "pages": len(project.pages),
         "blocks": sum(len(p.blocks) for p in project.pages),
         "project_path": STATE.get("project_path"),
+    }
+
+
+# --------------------------------------------------------------------- 配置 ---
+
+
+@app.get("/api/config")
+def get_config() -> dict:
+    """Current settings plus enough metadata to generate the form."""
+    from .config import describe, find_config, load
+
+    config, warnings = load()
+    return {
+        "source": str(config.source_path) if config.source_path else None,
+        "default_path": str(find_config() or Path.cwd() / CONFIG_FILE),
+        "fields": describe(config),
+        "glossary": config.glossary,
+        "warnings": warnings,
+    }
+
+
+class ConfigUpdate(BaseModel):
+    fields: dict[str, object] = {}
+    """Dotted path -> value, e.g. {"translate.llamacpp.n_threads": 8}."""
+    glossary: dict[str, str] | None = None
+    path: str | None = None
+
+
+@app.put("/api/config")
+def put_config(body: ConfigUpdate) -> dict:
+    from .config import _assign, describe, load, to_toml
+
+    config, _ = load(body.path)
+    known = {f["path"] for f in describe(config)}
+
+    unknown = [key for key in body.fields if key not in known]
+    if unknown:
+        raise HTTPException(400, f"unknown setting(s): {', '.join(sorted(unknown))}")
+
+    for key, value in body.fields.items():
+        _assign(config, key, value)
+    if body.glossary is not None:
+        config.glossary = body.glossary
+
+    target = Path(body.path or config.source_path or (Path.cwd() / CONFIG_FILE))
+    target.write_text(to_toml(config), encoding="utf-8")
+    return {"saved": str(target), "fields": describe(config), "glossary": config.glossary}
+
+
+# --------------------------------------------------------------------- 任务 ---
+
+
+class JobRequest(BaseModel):
+    input_dir: str | None = None
+    input_paths: list[str] | None = None
+    output_dir: str
+    overrides: dict[str, object] = {}
+    """Per-run config overrides; not written back to ctt.toml."""
+    limit: int | None = None
+    """Translate only the first N pages -- for checking quality before
+    committing to a whole chapter."""
+
+
+@app.post("/api/jobs")
+def create_job(body: JobRequest) -> dict:
+    from .cli import IMAGE_SUFFIXES, MIN_PAGE_BYTES, _numeric_key
+    from .config import _assign, load
+    from .jobs import MANAGER
+
+    if MANAGER.busy:
+        raise HTTPException(409, "a job is already running")
+
+    if body.input_paths:
+        paths = [Path(p) for p in body.input_paths]
+    elif body.input_dir:
+        directory = Path(body.input_dir)
+        if not directory.is_dir():
+            raise HTTPException(400, f"not a directory: {directory}")
+        paths = [p for p in directory.iterdir() if p.suffix.lower() in IMAGE_SUFFIXES]
+    else:
+        raise HTTPException(400, "give input_dir or input_paths")
+
+    config, _ = load()
+    for key, value in body.overrides.items():
+        _assign(config, key, value)
+
+    if config.skip_thumbnails:
+        paths = [p for p in paths if p.stat().st_size >= config.min_page_bytes]
+    paths = sorted(paths, key=_numeric_key)
+    if body.limit:
+        paths = paths[: body.limit]
+
+    if not paths:
+        raise HTTPException(400, "no images matched")
+
+    def build_pipeline():
+        from .cli import dataclass_kwargs
+        from .detect import ComicDetector
+        from .inpaint import LamaInpainter
+        from .ocr import build_router
+        from .translate import Glossary, build_chain
+
+        glossary = Glossary(config.glossary)
+        return Pipeline(
+            detector=ComicDetector(variant=config.detect.model,
+                                   cache_dir=config.models_dir or None),
+            ocr=build_router(config.ocr.languages),
+            translator=build_chain(
+                config.translate.backends,
+                glossary=glossary,
+                llamacpp=dataclass_kwargs(config.translate.llamacpp),
+                llm=dataclass_kwargs(config.translate.llm),
+                nllb=dataclass_kwargs(config.translate.nllb),
+            ),
+            target_lang=config.target_lang,
+            source_lang=config.source_lang,
+            glossary=glossary,
+            lama=LamaInpainter(config.erase.lama_path) if config.erase.lama_path else None,
+            detect_threshold=config.detect.threshold,
+        )
+
+    job = MANAGER.submit(paths, body.output_dir, build_pipeline)
+    return job.to_dict()
+
+
+@app.get("/api/jobs")
+def list_jobs() -> list[dict]:
+    from .jobs import MANAGER
+
+    return [j.to_dict() for j in MANAGER.list()]
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str) -> dict:
+    from .jobs import MANAGER
+
+    job = MANAGER.get(job_id)
+    if not job:
+        raise HTTPException(404, f"no job {job_id}")
+    return job.to_dict()
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict:
+    from .jobs import MANAGER
+
+    if not MANAGER.cancel(job_id):
+        raise HTTPException(400, "job is not cancellable")
+    return {"cancelled": job_id}
+
+
+@app.get("/api/browse")
+def browse(path: str = "") -> dict:
+    """List directories and image counts, for the folder picker.
+
+    A browser cannot hand the backend a real filesystem path, and this tool is
+    local-only, so the picker is served from the backend instead.
+    """
+    from .cli import IMAGE_SUFFIXES
+
+    target = Path(path) if path else Path.home()
+    if not target.is_dir():
+        raise HTTPException(400, f"not a directory: {target}")
+
+    entries = []
+    try:
+        for child in sorted(target.iterdir(), key=lambda p: p.name.lower()):
+            if child.name.startswith("."):
+                continue
+            if child.is_dir():
+                try:
+                    images = sum(
+                        1 for f in child.iterdir()
+                        if f.is_file() and f.suffix.lower() in IMAGE_SUFFIXES
+                    )
+                except OSError:
+                    images = 0
+                entries.append({"name": child.name, "path": str(child), "images": images})
+    except PermissionError:
+        raise HTTPException(403, f"permission denied: {target}")
+
+    own_images = sum(
+        1 for f in target.iterdir()
+        if f.is_file() and f.suffix.lower() in IMAGE_SUFFIXES
+    )
+    return {
+        "path": str(target),
+        "parent": str(target.parent) if target.parent != target else None,
+        "images": own_images,
+        "entries": entries,
     }

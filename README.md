@@ -89,7 +89,29 @@ HTTP（DeepL 或本地 llama.cpp），永不与视觉阶段共享显存。一话
 数量级且零显存。LaMa 仅在气泡底色非纯色时对小 crop 兜底 —— v1 跳过拟声词，
 触发率极低。
 
-## Web 编辑器
+## Web 界面
+
+```bash
+# 终端 1 — 后端
+cd backend && python -m uvicorn ctt.server:app --port 8000
+# 终端 2 — 前端
+cd frontend && npm install && npm run dev
+```
+
+打开 http://localhost:5173 ，三个页签：
+
+- **翻译** —— 后端提供的目录浏览器（浏览器拿不到真实路径，只能由后端列目录）、
+  只跑前 N 页、分阶段实时进度、可取消
+- **结果** —— 原图/成品切换、对白列表、直接改译文并重出片
+- **配置** —— `ctt.toml` 全字段表单
+
+技术栈 React 19 + Vite + Tailwind v4 + shadcn/ui，与 `swell-local-comic`、
+`download-img` 一致，后续可直接加 `src-tauri` 变桌面版。
+
+**配置表单是从后端反射生成的**：`GET /api/config` 返回字段的类型、可选值和说明，
+前端据此渲染。往 Python dataclass 里加一个字段，UI 自动出现，不用改前端。
+
+## Web 编辑器（旧版说明）
 
 ```bash
 # 终端 1
@@ -190,6 +212,15 @@ Otsu 把阈值切在墨色与纸色的中点，抗锯齿边缘被归到背景侧
 **从项目文档重新出片必须重跑擦除。** `.cttproj` 存的是文字和几何，不是像素。
 直接对原图跑 `render_page` 会把译文画在没擦掉的原文上面——两层字叠在一起。
 正确顺序永远是 `erase` → `typeset`。
+
+**`threading.Lock` 不可重入。** `JobManager.submit` 持锁期间调用了同样要加锁的
+`busy` 属性，直接死锁——提交任务的那个 HTTP 请求永远不返回，后端日志里连这条
+请求都不会出现（因为它卡在处理线程里）。拆出一个 `_busy_unlocked()` 给持锁方
+调用。`tests/test_jobs.py` 里有一条专门守这个的用例。
+
+**输出目录不能用 `prev || 默认值` 记忆。** 那样它只会在第一次赋值，用户把输入
+目录浏览到别处后输出仍指向最初打开的那个目录（实测停在了用户主目录），结果会
+静默写错地方。要用一个 ref 记录「用户是否手改过」，没改过就一直跟随输入目录。
 
 ## 状态
 
