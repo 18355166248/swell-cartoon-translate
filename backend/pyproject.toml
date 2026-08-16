@@ -1,0 +1,54 @@
+[project]
+name = "ctt"
+version = "0.1.0"
+description = "Comic/manga translation pipeline (detect -> ocr -> translate -> erase -> typeset)"
+requires-python = ">=3.10"
+
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "pillow>=10.2",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+# Stage 1/2/5 - vision models. onnxruntime-gpu on a 4GB card is fine for these.
+vision = [
+    "onnxruntime-gpu>=1.17",
+    "huggingface-hub>=0.21",
+]
+# Stage 3 - OCR engines.
+ocr = [
+    "paddleocr>=2.7",
+    "paddlepaddle-gpu>=2.6",
+    "manga-ocr>=0.1.11",
+]
+# Stage 4 - translation backends.
+translate = [
+    "httpx>=0.27",
+]
+# Stage 6 - rendering.
+typeset = [
+    "skia-python>=87.6",
+]
+server = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+ctt = "ctt.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ctt*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

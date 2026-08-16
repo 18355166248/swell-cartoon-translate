@@ -1,0 +1,21 @@
+# 默认按文本处理，检出时用各平台原生换行
+* text=auto
+
+# Shell 脚本必须是 LF。带 CRLF 的 .sh 在 Linux 上会报
+# "bad interpreter: /usr/bin/env bash^M" 而根本跑不起来。
+*.sh text eol=lf
+
+# PowerShell 脚本保持 CRLF，且是 UTF-8 BOM 存的——
+# Windows PowerShell 5.1 没有 BOM 会按 GBK 解码，脚本里的中文会变乱码导致语法错误。
+*.ps1 text eol=crlf working-tree-encoding=UTF-8
+
+# 二进制，别做换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gguf binary
+*.onnx binary
+*.ttf binary
+*.otf binary
+*.ttc binary

@@ -1,0 +1,109 @@
+# swell-cartoon-translate 配置文件
+#
+# 优先级（高到低）：命令行参数 > 环境变量 > 本文件 > 代码内置默认值
+# 所有值都可以删掉，删掉就用内置默认。
+#
+# 密钥不放这里。本文件是要提交进版本库的，密钥只从环境变量读：
+#   DEEPL_API_KEY   DeepL 的 key
+#   CTT_LLM_KEY     远程 OpenAI 兼容服务的 key
+#
+# 查看当前生效的完整配置：
+#   python -m ctt.cli config
+
+target_lang = "zh-Hans"     # 目标语言。zh-Hant 为繁体
+source_lang = "auto"        # auto 表示按整页多数字符判定，不逐句猜
+
+# 漫画站下载常附带一批 60x60 的缩略图，它们是合法 JPEG，不过滤会白跑检测。
+# 实测某话 410 个文件里有 126 个是这种垃圾。
+skip_thumbnails = true
+min_page_bytes = 50000
+
+# 模型权重下载位置。留空 = backend/models/
+# 特意不用 ~/.cache/huggingface，那是和别的工具共享的目录，卸载时容易误删。
+models_dir = ""
+
+
+[detect]
+model = "int8"        # int8 | fp32 | small。实测 int8 与 fp32 结果一致，体积小 5 倍
+threshold = 0.35      # 调低会多检出误报，调高会漏掉小气泡
+
+
+# 长条 webtoon 切片。作用是让任何模型都不会收到整张 14000px 的图。
+# 实测 en4.jpg (720x13859) 峰值模型输入从 9.98MP 降到 1.80MP。
+[slicing]
+target_height = 2000    # 期望的切片高度，会就近找分镜间隙
+max_height = 2500       # 硬上限，任何切片都不会超过
+min_height = 800        # 下限，避免切得太碎
+overlap_ratio = 0.15    # 找不到间隙时强行切，用这个比例重叠，靠 IoU 去重
+max_ink = 0.002         # 「该行无文字」的判据：偏离行中位数的像素比例上限
+min_gutter_run = 8      # 连续多少行无文字才算一个分镜间隙
+
+
+[ocr]
+# 可选：latin（英/西/法等） korean japanese chinese
+# 多个引擎会按识别置信度择优，代价是每个气泡多跑几次
+languages = ["latin"]
+max_side = 1000         # 气泡裁图送 OCR 前缩放到的最长边
+min_confidence = 0.3
+
+
+[translate]
+# 按顺序尝试，后面的补前面留下的空缺。
+# 可选：llamacpp（本地 LLM，推荐） deepl llm（远程 OpenAI 兼容） nllb
+#
+# 注意 nllb 会静默删掉露骨词汇（训练语料做过过滤），成人素材别用它。
+backends = ["llamacpp"]
+
+
+[translate.llamacpp]
+# 本地 GGUF，进程内加载，不装后台服务，跑完即释放。
+repo_id = "mradermacher/Qwen2.5-7B-Instruct-abliterated-v2-GGUF"
+filename = "Qwen2.5-7B-Instruct-abliterated-v2.Q4_K_M.gguf"
+model_path = ""     # 指定本地 GGUF 路径则不下载
+
+n_ctx = 4096
+n_gpu_layers = 0    # 0 = 完全不碰显卡，玩游戏不受影响。
+                    # 实测本管线只占约 259MB / 4096MB，且那 259MB 来自 ONNX 而非这里。
+                    # 不玩游戏时可调到 20-30 提速，但会吃显存。
+n_threads = 6       # 建议取物理核数。本机 12 逻辑核用 6
+temperature = 0.3
+max_tokens = 1024
+
+
+[translate.llm]
+# 远程或本地的 OpenAI 兼容服务（Ollama / llama.cpp server / 国产 API）
+base_url = "http://localhost:11434/v1"
+model = "qwen2.5:14b"
+temperature = 0.3
+timeout = 300.0
+
+
+[translate.nllb]
+model = "facebook/nllb-200-distilled-600M"
+batch_size = 16
+device = ""         # 留空自动选；填 "cpu" 强制不占显存
+
+
+[typeset]
+font = "SourceHanSansSC"    # 见 typeset/fonts.py 的候选列表
+line_spacing = 1.15
+align = "center"
+min_size = 9                # 小于这个字号就判定为溢出，标记进 needs_review
+bubble_inset = 0.10         # 气泡内边距，占短边比例。手工排版大约留这么多
+free_text_inset = 0.02      # 无气泡的自由文字用更小的边距
+
+
+[erase]
+# 气泡是纯色底，取蒙版外围环形中位数颜色直接填充即可，比生成式修复快两个数量级。
+# LaMa 只在气泡底色非纯色时兜底，v1 跳过拟声词所以基本不触发。
+lama_path = ""      # ONNX LaMa 路径，留空则禁用
+pad = 32            # 送 LaMa 的小图在蒙版外扩多少像素
+
+
+# 术语表：跨页保持人名和称谓一致。
+# 目前只在 llamacpp / llm 档生效（注入 prompt）；nllb 和 deepl 档只做事后检查。
+[glossary]
+LIAM = "利亚姆"
+EMMA = "艾玛"
+AMANDA = "阿曼达"
+ALEXA = "阿丽克莎"
