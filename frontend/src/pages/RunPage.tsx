@@ -40,6 +40,15 @@ function PreviewPanel({ preview }: { preview: PreviewResponse }) {
   const { summary } = preview;
   return (
     <div className="border-border space-y-2 rounded-lg border p-3 text-sm">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-muted-foreground text-xs">
+          试算结果（还没开始翻译）
+        </p>
+        <p className="text-muted-foreground text-xs">
+          共扫描 {summary.total} 张
+        </p>
+      </div>
+
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
         <span>
           将翻译 <strong className="text-base tabular-nums">{summary.included}</strong> 张
@@ -50,6 +59,11 @@ function PreviewPanel({ preview }: { preview: PreviewResponse }) {
         <span className="text-muted-foreground">
           预计耗时 {formatDuration(summary.estimated_seconds)}
         </span>
+        {summary.included > 0 && (
+          <span className="text-muted-foreground">
+            现在开始约 {formatFinishTime(summary.estimated_seconds)} 完成
+          </span>
+        )}
       </div>
 
       {Object.keys(summary.reasons).length > 0 && (
@@ -129,7 +143,7 @@ export function RunPage() {
     try {
       setPreview(await api.previewJob(jobRequest()));
     } catch (e) {
-      toast.error("预览失败", { description: e instanceof Error ? e.message : String(e) });
+      toast.error("试算失败", { description: e instanceof Error ? e.message : String(e) });
     } finally {
       setPreviewing(false);
     }
@@ -233,29 +247,35 @@ export function RunPage() {
 
           <Separator />
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => void runPreview()}
-              disabled={!inputDir || previewing}
-            >
-              {previewing ? <Loader2 className="mr-1.5 size-4 animate-spin" />
-                          : <Search className="mr-1.5 size-4" />}
-              预览选中
-            </Button>
-            <Button
-              onClick={() => void start()}
-              disabled={!inputDir || !outputDir || running || starting}
-            >
-              {starting ? <Loader2 className="mr-1.5 size-4 animate-spin" />
-                        : <Play className="mr-1.5 size-4" />}
-              开始翻译
-            </Button>
-            {running && (
-              <Button variant="secondary" onClick={() => job && void api.cancelJob(job.id)}>
-                <Square className="mr-1.5 size-3.5" /> 取消
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => void runPreview()}
+                disabled={!inputDir || previewing}
+              >
+                {previewing ? <Loader2 className="mr-1.5 size-4 animate-spin" />
+                            : <Search className="mr-1.5 size-4" />}
+                先看会翻哪些
               </Button>
-            )}
+              <Button
+                onClick={() => void start()}
+                disabled={!inputDir || !outputDir || running || starting}
+              >
+                {starting ? <Loader2 className="mr-1.5 size-4 animate-spin" />
+                          : <Play className="mr-1.5 size-4" />}
+                开始翻译
+              </Button>
+              {running && (
+                <Button variant="secondary" onClick={() => job && void api.cancelJob(job.id)}>
+                  <Square className="mr-1.5 size-3.5" /> 取消
+                </Button>
+              )}
+            </div>
+            <p className="text-muted-foreground text-xs">
+              「先看会翻哪些」只是空跑一遍统计，不会真的翻译。
+              {recursive && "开了递归之后到底会捞到哪些文件，光看目录是猜不出来的。"}
+            </p>
           </div>
 
           {preview && <PreviewPanel preview={preview} />}
