@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Play, Square, Loader2, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import {
+  Play, Square, Loader2, CheckCircle2, XCircle, AlertTriangle, Search,
+} from "lucide-react";
 import { toast } from "sonner";
-import { api, type Job } from "@/lib/api";
+import { api, type Job, type JobRequest, type PreviewResponse } from "@/lib/api";
+import { Switch } from "@/components/ui/switch";
 import { FolderPicker } from "@/components/FolderPicker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,15 +31,105 @@ function formatSeconds(value: number | null): string {
   return `${minutes}m ${Math.round(value % 60)}s`;
 }
 
+function PreviewPanel({ preview }: { preview: PreviewResponse }) {
+  const { summary } = preview;
+  return (
+    <div className="border-border space-y-2 rounded-lg border p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <span>
+          将翻译 <strong className="text-base tabular-nums">{summary.included}</strong> 张
+        </span>
+        {summary.skipped > 0 && (
+          <span className="text-muted-foreground">跳过 {summary.skipped} 张</span>
+        )}
+        <span className="text-muted-foreground">
+          预计 {formatSeconds(summary.estimated_seconds)}
+        </span>
+      </div>
+
+      {Object.keys(summary.reasons).length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {Object.entries(summary.reasons).map(([reason, count]) => (
+            <Badge key={reason} variant="secondary" className="font-normal">
+              {reason} × {count}
+            </Badge>
+          ))}
+        </div>
+      )}
+
+      {summary.folders.length > 0 && (
+        <ScrollArea className="max-h-32">
+          <div className="space-y-0.5">
+            {summary.folders.map((f) => (
+              <div key={f.path} className="flex justify-between gap-3 text-xs">
+                <span className="text-muted-foreground truncate font-mono" title={f.path}>
+                  {f.path}
+                </span>
+                <span className="shrink-0 tabular-nums">{f.count}</span>
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+      )}
+
+      {preview.skipped.length > 0 && (
+        <details className="text-xs">
+          <summary className="text-muted-foreground cursor-pointer">
+            查看被跳过的 {preview.skipped.length} 张
+          </summary>
+          <ScrollArea className="mt-1.5 max-h-40">
+            <div className="space-y-0.5">
+              {preview.skipped.map((c) => (
+                <div key={c.path} className="flex justify-between gap-3">
+                  <span className="text-muted-foreground truncate font-mono" title={c.path}>
+                    {c.name}
+                  </span>
+                  <span className="shrink-0">{c.reason}</span>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export function RunPage({ onFinished }: { onFinished: (projectPath: string) => void }) {
   const [inputDir, setInputDir] = useState("");
-  const [imageCount, setImageCount] = useState(0);
   const [outputDir, setOutputDir] = useState("");
   const [limit, setLimit] = useState<string>("10");
+  const [recursive, setRecursive] = useState(false);
+  const [preview, setPreview] = useState<PreviewResponse | null>(null);
+  const [previewing, setPreviewing] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [starting, setStarting] = useState(false);
   const notified = useRef<string>("");
   const outputEdited = useRef(false);
+
+  const jobRequest = (): JobRequest => {
+    const parsed = limit.trim() ? parseInt(limit, 10) : undefined;
+    return {
+      input_dir: inputDir,
+      output_dir: outputDir,
+      recursive,
+      limit: parsed !== undefined && !Number.isNaN(parsed) ? parsed : undefined,
+    };
+  };
+
+  const runPreview = async () => {
+    setPreviewing(true);
+    try {
+      setPreview(await api.previewJob(jobRequest()));
+    } catch (e) {
+      toast.error("预览失败", { description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  // A stale preview describing a different folder is worse than none.
+  useEffect(() => setPreview(null), [inputDir, recursive, limit]);
 
   const running = job?.status === "running" || job?.status === "pending";
 
@@ -80,9 +173,8 @@ export function RunPage({ onFinished }: { onFinished: (projectPath: string) => v
     }).catch(() => {});
   }, []);
 
-  const handleFolder = useCallback((path: string, images: number) => {
+  const handleFolder = useCallback((path: string) => {
     setInputDir(path);
-    setImageCount(images);
     // Track the output directory to the input until the user types their own.
     // A plain `prev || default` sticks to whatever folder the picker happened
     // to open on first, so browsing to the real chapter would still have
@@ -93,12 +185,7 @@ export function RunPage({ onFinished }: { onFinished: (projectPath: string) => v
   const start = async () => {
     setStarting(true);
     try {
-      const parsedLimit = limit.trim() ? parseInt(limit, 10) : undefined;
-      const created = await api.createJob({
-        input_dir: inputDir,
-        output_dir: outputDir,
-        limit: Number.isNaN(parsedLimit!) ? undefined : parsedLimit,
-      });
+      const created = await api.createJob(jobRequest());
       notified.current = "";
       setJob(created);
     } catch (e) {
@@ -134,6 +221,16 @@ export function RunPage({ onFinished }: { onFinished: (projectPath: string) => v
             />
           </div>
 
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label className="text-xs">递归子目录</Label>
+              <p className="text-muted-foreground mt-0.5 text-xs">
+                指向系列文件夹即可一次翻完所有话。输出目录会自动排除。
+              </p>
+            </div>
+            <Switch checked={recursive} onCheckedChange={setRecursive} />
+          </div>
+
           <div className="space-y-1.5">
             <Label className="text-xs">只跑前 N 页</Label>
             <Input
@@ -149,10 +246,19 @@ export function RunPage({ onFinished }: { onFinished: (projectPath: string) => v
 
           <Separator />
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => void runPreview()}
+              disabled={!inputDir || previewing}
+            >
+              {previewing ? <Loader2 className="mr-1.5 size-4 animate-spin" />
+                          : <Search className="mr-1.5 size-4" />}
+              预览选中
+            </Button>
             <Button
               onClick={() => void start()}
-              disabled={!inputDir || !outputDir || imageCount === 0 || running || starting}
+              disabled={!inputDir || !outputDir || running || starting}
             >
               {starting ? <Loader2 className="mr-1.5 size-4 animate-spin" />
                         : <Play className="mr-1.5 size-4" />}
@@ -163,17 +269,9 @@ export function RunPage({ onFinished }: { onFinished: (projectPath: string) => v
                 <Square className="mr-1.5 size-3.5" /> 取消
               </Button>
             )}
-            {imageCount > 0 && !running && (
-              <span className="text-muted-foreground text-xs">
-                本目录 {imageCount} 张图
-              </span>
-            )}
           </div>
-          {imageCount === 0 && inputDir && (
-            <p className="text-muted-foreground text-xs">
-              这个目录里没有图片，进下一层看看。
-            </p>
-          )}
+
+          {preview && <PreviewPanel preview={preview} />}
         </CardContent>
       </Card>
 

@@ -55,6 +55,37 @@ export interface Job {
   results: JobPageResult[];
 }
 
+export interface JobRequest {
+  input_dir: string;
+  output_dir: string;
+  limit?: number;
+  recursive?: boolean;
+  overrides?: Record<string, unknown>;
+}
+
+export interface Candidate {
+  path: string;
+  name: string;
+  parent: string;
+  width: number;
+  height: number;
+  size: number;
+  reason: string;
+}
+
+export interface PreviewResponse {
+  summary: {
+    total: number;
+    included: number;
+    skipped: number;
+    reasons: Record<string, number>;
+    folders: { path: string; count: number }[];
+    estimated_seconds: number;
+  };
+  included: Candidate[];
+  skipped: Candidate[];
+}
+
 export interface BrowseEntry {
   name: string;
   path: string;
@@ -138,12 +169,13 @@ export const api = {
   browse: (path?: string) =>
     request<BrowseResponse>(`/api/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`),
 
-  createJob: (body: {
-    input_dir: string;
-    output_dir: string;
-    limit?: number;
-    overrides?: Record<string, unknown>;
-  }) => request<Job>("/api/jobs", { method: "POST", body: JSON.stringify(body) }),
+  createJob: (body: JobRequest) =>
+    request<Job>("/api/jobs", { method: "POST", body: JSON.stringify(body) }),
+  previewJob: (body: JobRequest) =>
+    request<PreviewResponse>("/api/jobs/preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   getJob: (id: string) => request<Job>(`/api/jobs/${id}`),
   listJobs: () => request<Job[]>("/api/jobs"),
   cancelJob: (id: string) => request<{ cancelled: string }>(`/api/jobs/${id}/cancel`, { method: "POST" }),

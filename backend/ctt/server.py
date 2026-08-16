@@ -285,34 +285,87 @@ class JobRequest(BaseModel):
     limit: int | None = None
     """Translate only the first N pages -- for checking quality before
     committing to a whole chapter."""
+    recursive: bool | None = None
 
 
-@app.post("/api/jobs")
-def create_job(body: JobRequest) -> dict:
-    from .cli import IMAGE_SUFFIXES, MIN_PAGE_BYTES, _numeric_key
+def _resolve_inputs(body: JobRequest):
+    """Shared by the preview and the real run so they cannot disagree.
+
+    A preview that selects a different set from the run it previews is worse
+    than no preview at all.
+    """
     from .config import _assign, load
-    from .jobs import MANAGER
-
-    if MANAGER.busy:
-        raise HTTPException(409, "a job is already running")
-
-    if body.input_paths:
-        paths = [Path(p) for p in body.input_paths]
-    elif body.input_dir:
-        directory = Path(body.input_dir)
-        if not directory.is_dir():
-            raise HTTPException(400, f"not a directory: {directory}")
-        paths = [p for p in directory.iterdir() if p.suffix.lower() in IMAGE_SUFFIXES]
-    else:
-        raise HTTPException(400, "give input_dir or input_paths")
+    from .discover import Filters, discover
 
     config, _ = load()
     for key, value in body.overrides.items():
         _assign(config, key, value)
 
-    if config.skip_thumbnails:
-        paths = [p for p in paths if p.stat().st_size >= config.min_page_bytes]
-    paths = sorted(paths, key=_numeric_key)
+    recursive = body.recursive if body.recursive is not None else config.input.recursive
+    filters = Filters(
+        min_bytes=config.input.min_bytes,
+        min_side=config.input.min_side,
+        max_aspect=config.input.max_aspect,
+        skip_output_dirs=config.input.skip_output_dirs,
+    )
+
+    if body.input_paths:
+        from .discover import Candidate
+
+        candidates = [Candidate(path=Path(p), size=Path(p).stat().st_size)
+                      for p in body.input_paths]
+    elif body.input_dir:
+        directory = Path(body.input_dir)
+        if not directory.is_dir():
+            raise HTTPException(400, f"not a directory: {directory}")
+        # The output folder is frequently nested inside the input tree, so a
+        # recursive run would otherwise re-translate its own previous results.
+        candidates = discover(
+            directory,
+            recursive=recursive,
+            filters=filters,
+            exclude_dirs=[body.output_dir],
+        )
+    else:
+        raise HTTPException(400, "give input_dir or input_paths")
+
+    return config, candidates
+
+
+@app.post("/api/jobs/preview")
+def preview_job(body: JobRequest) -> dict:
+    """What a run would pick up, and why anything was skipped.
+
+    Worth its own endpoint: with recursion enabled the selection is not
+    predictable by eye, and a wrong guess costs hours.
+    """
+    from .discover import summarise
+
+    _, candidates = _resolve_inputs(body)
+    included = [c for c in candidates if c.included]
+    if body.limit:
+        included = included[: body.limit]
+
+    summary = summarise(candidates)
+    if body.limit:
+        summary["included"] = len(included)
+        summary["estimated_seconds"] = len(included) * 36
+    return {
+        "summary": summary,
+        "included": [c.to_dict() for c in included[:200]],
+        "skipped": [c.to_dict() for c in candidates if not c.included][:200],
+    }
+
+
+@app.post("/api/jobs")
+def create_job(body: JobRequest) -> dict:
+    from .jobs import MANAGER
+
+    if MANAGER.busy:
+        raise HTTPException(409, "a job is already running")
+
+    config, candidates = _resolve_inputs(body)
+    paths = [c.path for c in candidates if c.included]
     if body.limit:
         paths = paths[: body.limit]
 

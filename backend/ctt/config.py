@@ -110,12 +110,24 @@ class EraseConfig:
 
 
 @dataclass
+class InputConfig:
+    """Which files a run picks up."""
+
+    recursive: bool = False
+    min_bytes: int = 50_000
+    min_side: int = 600
+    max_aspect: float = 4.0
+    skip_output_dirs: bool = True
+
+
+@dataclass
 class Config:
     target_lang: str = "zh-Hans"
     source_lang: str = "auto"
     models_dir: str = ""
     skip_thumbnails: bool = True
     min_page_bytes: int = 50_000
+    input: InputConfig = field(default_factory=InputConfig)
 
     detect: DetectConfig = field(default_factory=DetectConfig)
     slicing: SliceConfig = field(default_factory=SliceConfig)
@@ -222,6 +234,11 @@ FIELD_DOCS = {
     "target_lang": "目标语言。zh-Hans 简体，zh-Hant 繁体",
     "source_lang": "auto 表示按整页多数字符判定，不逐句猜",
     "skip_thumbnails": "跳过漫画站附带的小缩略图。实测某话 410 个文件里有 126 个是垃圾图",
+    "input.recursive": "递归所有子目录。指向系列文件夹即可一次翻完所有话",
+    "input.min_bytes": "小于此体积的文件跳过。缩略图和横幅通常远小于正文页",
+    "input.min_side": "宽或高任一小于此值就跳过。长条 webtoon 窄而极高，所以是分别限制两边而不是限制面积",
+    "input.max_aspect": "宽/高 超过此值判为横幅、标题卡。只限制横向——竖条漫画常达 20:1，正是要保留的",
+    "input.skip_output_dirs": "跳过 _zh / out / translated 这类目录。否则递归会把上次的成品再翻一遍，得到「译文的译文」",
     "detect.threshold": "调低会多检出误报，调高会漏掉小气泡",
     "slicing.max_height": "切片高度硬上限。这是长条 webtoon 不吃爆显存的关键",
     "ocr.languages": "多个引擎按识别置信度择优，代价是每个气泡多跑几次",
