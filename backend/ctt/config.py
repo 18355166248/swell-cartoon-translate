@@ -113,7 +113,9 @@ class EraseConfig:
 class InputConfig:
     """Which files a run picks up."""
 
-    recursive: bool = False
+    recursive: bool = True
+    """On by default: pointing at a series folder and having every chapter
+    translated is the common case, and `skip_output_dirs` makes it safe."""
     min_bytes: int = 50_000
     min_side: int = 600
     max_aspect: float = 4.0

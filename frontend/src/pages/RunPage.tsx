@@ -1,9 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Play, Square, Loader2, CheckCircle2, XCircle, AlertTriangle, Search,
 } from "lucide-react";
+import { useAtom, useSetAtom } from "jotai";
 import { toast } from "sonner";
-import { api, type Job, type JobRequest, type PreviewResponse } from "@/lib/api";
+import { api, type JobRequest, type PreviewResponse } from "@/lib/api";
+import { formatDuration, formatFinishTime, formatRemaining } from "@/lib/duration";
+import {
+  activeJobIdAtom,
+  inputDirAtom,
+  jobAtom,
+  limitAtom,
+  outputDirAtom,
+  outputEditedAtom,
+  previewAtom,
+  recursiveAtom,
+} from "@/state/atoms";
 import { Switch } from "@/components/ui/switch";
 import { FolderPicker } from "@/components/FolderPicker";
 import { Button } from "@/components/ui/button";
@@ -24,13 +36,6 @@ const STAGE_LABELS: Record<string, string> = {
   "loading models": "加载模型",
 };
 
-function formatSeconds(value: number | null): string {
-  if (value === null) return "—";
-  if (value < 60) return `${Math.round(value)}s`;
-  const minutes = Math.floor(value / 60);
-  return `${minutes}m ${Math.round(value % 60)}s`;
-}
-
 function PreviewPanel({ preview }: { preview: PreviewResponse }) {
   const { summary } = preview;
   return (
@@ -43,7 +48,7 @@ function PreviewPanel({ preview }: { preview: PreviewResponse }) {
           <span className="text-muted-foreground">跳过 {summary.skipped} 张</span>
         )}
         <span className="text-muted-foreground">
-          预计 {formatSeconds(summary.estimated_seconds)}
+          预计耗时 {formatDuration(summary.estimated_seconds)}
         </span>
       </div>
 
@@ -95,17 +100,19 @@ function PreviewPanel({ preview }: { preview: PreviewResponse }) {
   );
 }
 
-export function RunPage({ onFinished }: { onFinished: (projectPath: string) => void }) {
-  const [inputDir, setInputDir] = useState("");
-  const [outputDir, setOutputDir] = useState("");
-  const [limit, setLimit] = useState<string>("10");
-  const [recursive, setRecursive] = useState(false);
-  const [preview, setPreview] = useState<PreviewResponse | null>(null);
+export function RunPage() {
+  // Held in jotai so the form and the running job survive tab switches, and
+  // the persisted pieces survive a reload.
+  const [inputDir, setInputDir] = useAtom(inputDirAtom);
+  const [outputDir, setOutputDir] = useAtom(outputDirAtom);
+  const [outputEdited, setOutputEdited] = useAtom(outputEditedAtom);
+  const [limit, setLimit] = useAtom(limitAtom);
+  const [recursive, setRecursive] = useAtom(recursiveAtom);
+  const setActiveJobId = useSetAtom(activeJobIdAtom);
+  const [preview, setPreview] = useAtom(previewAtom);
+  const [job, setJob] = useAtom(jobAtom);
   const [previewing, setPreviewing] = useState(false);
-  const [job, setJob] = useState<Job | null>(null);
   const [starting, setStarting] = useState(false);
-  const notified = useRef<string>("");
-  const outputEdited = useRef(false);
 
   const jobRequest = (): JobRequest => {
     const parsed = limit.trim() ? parseInt(limit, 10) : undefined;
@@ -131,62 +138,27 @@ export function RunPage({ onFinished }: { onFinished: (projectPath: string) => v
   // A stale preview describing a different folder is worse than none.
   useEffect(() => setPreview(null), [inputDir, recursive, limit]);
 
+  // Polling, re-attachment and completion toasts live in App via
+  // `useJobPolling`, so they keep working while another tab is showing.
   const running = job?.status === "running" || job?.status === "pending";
 
-  // Poll while a job is live. 1s is comfortably finer than the ~36s it takes
-  // to finish a page, and the endpoint is a dict lookup.
-  useEffect(() => {
-    if (!job || !running) return;
-    const timer = setInterval(async () => {
-      try {
-        setJob(await api.getJob(job.id));
-      } catch {
-        /* transient; next tick retries */
-      }
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [job, running]);
-
-  // Fire completion side effects once, not on every poll that follows.
-  useEffect(() => {
-    if (!job || running || notified.current === job.id) return;
-    notified.current = job.id;
-    if (job.status === "done") {
-      toast.success(`翻译完成：${job.completed} 页`, { description: job.output_dir });
-      if (job.project_path) onFinished(job.project_path);
-    } else if (job.status === "failed") {
-      toast.error("任务失败", { description: job.error });
-    } else if (job.status === "cancelled") {
-      toast.info(`已取消，完成 ${job.completed} 页`);
-      if (job.project_path) onFinished(job.project_path);
-    }
-  }, [job, running, onFinished]);
-
-  // Resume display if a job is already running (e.g. after a page refresh).
-  useEffect(() => {
-    void api.listJobs().then((jobs) => {
-      const live = jobs.find((j) => j.status === "running" || j.status === "pending");
-      if (live) {
-        setJob(live);
-        notified.current = "";
-      }
-    }).catch(() => {});
-  }, []);
-
-  const handleFolder = useCallback((path: string) => {
-    setInputDir(path);
-    // Track the output directory to the input until the user types their own.
-    // A plain `prev || default` sticks to whatever folder the picker happened
-    // to open on first, so browsing to the real chapter would still have
-    // written results next to the home directory.
-    setOutputDir((prev) => (outputEdited.current ? prev : `${path}\\_zh`));
-  }, []);
+  const handleFolder = useCallback(
+    (path: string) => {
+      setInputDir(path);
+      // Track the output directory to the input until the user types their own.
+      // A plain `prev || default` sticks to whatever folder the picker happened
+      // to open on first, so browsing to the real chapter would still have
+      // written results next to the home directory.
+      if (!outputEdited) setOutputDir(`${path}\\_zh`);
+    },
+    [outputEdited, setInputDir, setOutputDir],
+  );
 
   const start = async () => {
     setStarting(true);
     try {
       const created = await api.createJob(jobRequest());
-      notified.current = "";
+      setActiveJobId(created.id);
       setJob(created);
     } catch (e) {
       toast.error("无法启动", { description: e instanceof Error ? e.message : String(e) });
@@ -213,7 +185,7 @@ export function RunPage({ onFinished }: { onFinished: (projectPath: string) => v
             <Input
               value={outputDir}
               onChange={(e) => {
-                outputEdited.current = true;
+                setOutputEdited(true);
                 setOutputDir(e.target.value);
               }}
               className="font-mono text-xs"
@@ -232,15 +204,30 @@ export function RunPage({ onFinished }: { onFinished: (projectPath: string) => v
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs">只跑前 N 页</Label>
-            <Input
-              value={limit}
-              onChange={(e) => setLimit(e.target.value)}
-              className="w-32"
-              placeholder="留空 = 全部"
-            />
+            <Label className="text-xs">数量限制</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                value={limit}
+                onChange={(e) => setLimit(e.target.value.replace(/\D/g, ""))}
+                className="w-32"
+                placeholder="全部"
+                inputMode="numeric"
+              />
+              {limit.trim() && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => setLimit("")}
+                >
+                  改为全部
+                </Button>
+              )}
+            </div>
             <p className="text-muted-foreground text-xs">
-              一页约 36 秒。先跑 10 页确认效果，再决定要不要跑整话。
+              {limit.trim()
+                ? `只翻译前 ${limit} 张图片，其余跳过。`
+                : "默认翻译选中的全部图片。填数字可以先试跑几张确认效果。"}
             </p>
           </div>
 
@@ -300,16 +287,30 @@ export function RunPage({ onFinished }: { onFinished: (projectPath: string) => v
               <div className="space-y-1.5">
                 <div className="flex items-baseline justify-between text-sm">
                   <span className="truncate font-mono text-xs">{job.page_name || "—"}</span>
-                  <span className="text-muted-foreground shrink-0 text-xs">
-                    {job.completed} / {job.total}
+                  <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                    {job.completed} / {job.total} 张
                   </span>
                 </div>
                 <Progress value={percent} />
-                <div className="text-muted-foreground flex justify-between text-xs">
-                  <span>已用 {formatSeconds(job.elapsed)}</span>
-                  <span>剩余 {formatSeconds(job.eta)}</span>
+                <div className="text-muted-foreground flex flex-wrap justify-between gap-x-3 text-xs">
+                  <span>已用 {formatDuration(job.elapsed)}</span>
+                  {running && <span>{formatRemaining(job.eta)}</span>}
                 </div>
               </div>
+
+              {running && job.eta !== null && (
+                // The question behind "how long left" is usually "can I go do
+                // something else", which a bare countdown does not answer.
+                <div className="border-border bg-muted/40 rounded-lg border px-3 py-2">
+                  <p className="text-muted-foreground text-xs">预计完成时间</p>
+                  <p className="mt-0.5 text-lg font-semibold tabular-nums">
+                    {formatFinishTime(job.eta)}
+                  </p>
+                  <p className="text-muted-foreground mt-0.5 text-xs">
+                    还需约 {formatDuration(job.eta)}，按已完成 {job.completed} 张的平均速度推算
+                  </p>
+                </div>
+              )}
 
               {running && (
                 <div className="flex flex-wrap gap-1.5">

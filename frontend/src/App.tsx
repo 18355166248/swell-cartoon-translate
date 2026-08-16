@@ -1,5 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
+import { useAtom } from "jotai";
 import { Settings, Play, Images, Circle } from "lucide-react";
+import { activeTabAtom, backendOnlineAtom, projectPathAtom } from "@/state/atoms";
+import { useJobPolling } from "@/hooks/useJobPolling";
 import { Toaster } from "@/components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -19,16 +22,29 @@ function Scrollable({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState("run");
-  const [projectPath, setProjectPath] = useState("");
-  const [online, setOnline] = useState<boolean | null>(null);
+  // Persisted, so a reload lands back on the tab and project you were using.
+  const [tab, setTab] = useAtom(activeTabAtom);
+  const [projectPath, setProjectPath] = useAtom(projectPathAtom);
+  const [online, setOnline] = useAtom(backendOnlineAtom);
 
   useEffect(() => {
     const ping = () => api.health().then(() => setOnline(true)).catch(() => setOnline(false));
     void ping();
     const timer = setInterval(ping, 10_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [setOnline]);
+
+  // Mounted here rather than in RunPage so progress keeps advancing while any
+  // tab is showing, and so a reload re-attaches to a run already in flight.
+  useJobPolling(
+    useCallback(
+      (path: string) => {
+        setProjectPath(path);
+        setTab("results");
+      },
+      [setProjectPath, setTab],
+    ),
+  );
 
   return (
     <TooltipProvider>
@@ -83,20 +99,15 @@ export default function App() {
               </div>
             )}
 
-            {/* Kept mounted: a running job's poll loop must survive tab
-                switches, and re-opening a project on every visit would
-                refetch every page image. */}
-            <TabsContent value="run" forceMount hidden={tab !== "run"} className="h-full">
+            {/* No `forceMount` needed any more: the state these pages care
+                about lives in jotai and the poll loop lives above, so they
+                can unmount and come back to exactly where they were. */}
+            <TabsContent value="run" className="h-full">
               <Scrollable>
-                <RunPage
-                  onFinished={(path) => {
-                    setProjectPath(path);
-                    setTab("results");
-                  }}
-                />
+                <RunPage />
               </Scrollable>
             </TabsContent>
-            <TabsContent value="results" forceMount hidden={tab !== "results"} className="h-full">
+            <TabsContent value="results" className="h-full">
               <ResultsPage projectPath={projectPath} />
             </TabsContent>
             <TabsContent value="config" className="h-full">

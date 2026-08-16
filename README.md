@@ -316,6 +316,14 @@ ECONNREFUSED。`vite.config.ts` 里显式写 `server.host = "127.0.0.1"`。
 `cancelled`，而 `project_path` 是循环后才写的——UI 一看到终态就跳到结果页，
 拿到的却是空路径。
 
+**jotai 的 `atomWithStorage` 默认不在初始化时读 localStorage。** 首次渲染拿到的是
+默认值，之后才同步。这一帧就足以造成破坏：目录选择器以空路径挂载 → 回退去列用户
+主目录 → 把主目录写回覆盖了你保存的路径。必须传 `{ getOnInit: true }`。
+
+**轮询不能放在 tab 组件里。** 放在 RunPage 里的话，一切到别的 tab 就停了，进度会
+冻住、切回来才跳变。提到 App 层的 `useJobPolling` 之后，tab 也不再需要 `forceMount`
+硬撑着不卸载。
+
 **TOML 里节标题以下的裸键属于该节。** 往 `ctt.toml` 加 `[input]` 时把它插在了
 `models_dir` 上面，结果那个顶层键变成了 `input.models_dir`，静默失效。
 是「未知配置项」警告抓到的——这条警告的价值就在这里，否则只会表现为
