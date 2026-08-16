@@ -13,9 +13,14 @@ import {
 } from "@/components/ui/select";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
+/** Key standing in for the top-level (unprefixed) fields.
+ *  Must not be "" -- see the grouping code below. */
+const GENERAL = "general";
+
 /** Friendly names for the dotted config sections. */
 const SECTION_LABELS: Record<string, string> = {
-  "": "通用",
+  [GENERAL]: "通用",
+  input: "输入筛选",
   detect: "检测",
   slicing: "长条切片",
   ocr: "文字识别",
@@ -116,9 +121,13 @@ export function ConfigPage() {
     if (!config) return [];
     const grouped = new Map<string, ConfigField[]>();
     for (const field of config.fields) {
-      const list = grouped.get(field.section) ?? [];
+      // Top-level fields have an empty section. Radix Accordion treats an
+      // empty string as "no item", so that panel silently refused to open --
+      // give it a real key instead.
+      const key = field.section || GENERAL;
+      const list = grouped.get(key) ?? [];
       list.push(field);
-      grouped.set(field.section, list);
+      grouped.set(key, list);
     }
     return [...grouped.entries()];
   }, [config]);
@@ -179,7 +188,7 @@ export function ConfigPage() {
         </Card>
       )}
 
-      <Accordion type="multiple" defaultValue={["", "translate.llamacpp"]} className="space-y-2">
+      <Accordion type="multiple" defaultValue={[GENERAL, "translate.llamacpp"]} className="space-y-2">
         {sections.map(([section, fields]) => (
           <AccordionItem
             key={section}

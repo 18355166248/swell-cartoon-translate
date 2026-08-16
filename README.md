@@ -304,6 +304,18 @@ ECONNREFUSED。`vite.config.ts` 里显式写 `server.host = "127.0.0.1"`。
 `找不到 backend\backend`。用 `--app-dir` / `--prefix` 指定目录，命令在哪都能跑。
 `scripts/dev.ps1` 同理，所有路径相对脚本自身解析。
 
+**Radix Accordion 的 value 不能是空字符串。** 配置表单按 `section` 分组，而顶层字段
+（`target_lang` 等）的 section 是 `""`，Radix 把空串当成「没有这一项」，于是「通用」
+那一节点了没反应、也没有任何报错。改成用 `"general"` 这个真实 key。
+
+**递归遍历必须排除输出目录。** 输出目录常常就在输入目录里面（`chapter-1-4/_zh`），
+不排除的话第二次跑会把上次的成品当素材，得到「译文的译文」。实测递归 579 张里
+有 289 张是上次的输出。
+
+**任务状态变成终态之前，产物必须已经落盘。** 原来在循环里就把 status 置为
+`cancelled`，而 `project_path` 是循环后才写的——UI 一看到终态就跳到结果页，
+拿到的却是空路径。
+
 **TOML 里节标题以下的裸键属于该节。** 往 `ctt.toml` 加 `[input]` 时把它插在了
 `models_dir` 上面，结果那个顶层键变成了 `input.models_dir`，静默失效。
 是「未知配置项」警告抓到的——这条警告的价值就在这里，否则只会表现为
