@@ -91,11 +91,21 @@ HTTP（DeepL 或本地 llama.cpp），永不与视觉阶段共享显存。一话
 
 ## Web 界面
 
+一条命令同时起前后端（在仓库根目录跑）：
+
 ```bash
-# 终端 1 — 后端
-cd backend && python -m uvicorn ctt.server:app --port 8000
-# 终端 2 — 前端
-cd frontend && npm install && npm run dev
+powershell -File scripts\dev.ps1
+```
+
+或者手动开两个终端。**下面两条都在仓库根目录执行**，用 `--app-dir` / `--prefix`
+指定子目录，就不需要 `cd` —— 也就不会因为当前已经在子目录里而失败：
+
+```bash
+python -m uvicorn ctt.server:app --port 8000 --app-dir backend
+```
+
+```bash
+npm --prefix frontend run dev
 ```
 
 打开 http://localhost:5173 ，三个页签：
@@ -221,6 +231,10 @@ Otsu 把阈值切在墨色与纸色的中点，抗锯齿边缘被归到背景侧
 **输出目录不能用 `prev || 默认值` 记忆。** 那样它只会在第一次赋值，用户把输入
 目录浏览到别处后输出仍指向最初打开的那个目录（实测停在了用户主目录），结果会
 静默写错地方。要用一个 ref 记录「用户是否手改过」，没改过就一直跟随输入目录。
+
+**文档里的启动命令别写 `cd 子目录 && ...`。** 已经在那个子目录里的时候就会报
+`找不到 backend\backend`。用 `--app-dir` / `--prefix` 指定目录，命令在哪都能跑。
+`scripts/dev.ps1` 同理，所有路径相对脚本自身解析。
 
 ## 状态
 
