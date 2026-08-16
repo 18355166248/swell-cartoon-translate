@@ -125,8 +125,13 @@ class TestFailureAndCancel:
         assert wait_until(lambda: len(job.results) >= 1)
         manager.cancel(job.id)
         assert wait_until(lambda: job.status == "cancelled")
-        # Pages already done must be openable in the editor.
+        # A terminal status must imply the outputs are already on disk. The UI
+        # navigates to the results tab the moment it sees one, so publishing
+        # the status before writing the project sends it somewhere empty.
         assert job.project_path
+        from pathlib import Path
+
+        assert Path(job.project_path).is_file()
 
     def test_cancelling_a_finished_job_is_a_noop(self, pages, tmp_path):
         manager = JobManager()

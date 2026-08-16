@@ -428,6 +428,30 @@ def cancel_job(job_id: str) -> dict:
     return {"cancelled": job_id}
 
 
+class PickRequest(BaseModel):
+    initial: str = ""
+    title: str = "选择漫画目录"
+
+
+@app.post("/api/pick-folder")
+def pick_folder_endpoint(body: PickRequest) -> dict:
+    """Open the OS folder chooser on the machine running the backend.
+
+    Legitimate here only because this is a local-first tool: the backend and
+    the browser are the same machine, so "the server's desktop" is the user's
+    desktop. The in-page browser stays as the fallback for when no dialog can
+    be shown (headless, remote, or a locked-down environment).
+    """
+    from .picker import pick_folder
+
+    chosen = pick_folder(title=body.title, initial=body.initial)
+    if chosen is None:
+        raise HTTPException(
+            501, "本机无法弹出文件夹对话框，请用页面内的目录浏览器"
+        )
+    return {"path": chosen, "cancelled": chosen == ""}
+
+
 @app.get("/api/browse")
 def browse(path: str = "") -> dict:
     """List directories and image counts, for the folder picker.
@@ -452,9 +476,20 @@ def browse(path: str = "") -> dict:
                         1 for f in child.iterdir()
                         if f.is_file() and f.suffix.lower() in IMAGE_SUFFIXES
                     )
+                    # Recursive counts too, so a series folder does not look
+                    # empty just because its pages live one level down.
+                    nested = sum(
+                        1 for f in child.rglob("*")
+                        if f.is_file() and f.suffix.lower() in IMAGE_SUFFIXES
+                    )
                 except OSError:
-                    images = 0
-                entries.append({"name": child.name, "path": str(child), "images": images})
+                    images = nested = 0
+                entries.append({
+                    "name": child.name,
+                    "path": str(child),
+                    "images": images,
+                    "nested_images": nested,
+                })
     except PermissionError:
         raise HTTPException(403, f"permission denied: {target}")
 
@@ -462,9 +497,14 @@ def browse(path: str = "") -> dict:
         1 for f in target.iterdir()
         if f.is_file() and f.suffix.lower() in IMAGE_SUFFIXES
     )
+    nested_total = sum(
+        1 for f in target.rglob("*")
+        if f.is_file() and f.suffix.lower() in IMAGE_SUFFIXES
+    )
     return {
         "path": str(target),
         "parent": str(target.parent) if target.parent != target else None,
         "images": own_images,
+        "nested_images": nested_total,
         "entries": entries,
     }

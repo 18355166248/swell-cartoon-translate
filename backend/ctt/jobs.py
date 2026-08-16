@@ -208,9 +208,15 @@ class JobManager:
                 glossary=pipeline.glossary.entries,
             )
 
+            # Status stays "running" until the project file is on disk. Flipping
+            # it to a terminal value inside the loop lets a watcher observe
+            # "cancelled" while `project_path` is still empty -- the UI then
+            # jumps to the results tab with nothing to open.
+            cancelled = False
+
             for index, source in enumerate(job.input_paths):
                 if job._cancel.is_set():
-                    job.status = "cancelled"
+                    cancelled = True
                     job.log_lines.append(_stamp("cancelled"))
                     break
 
@@ -245,7 +251,9 @@ class JobManager:
             project_file.write_text(project.model_dump_json(indent=2), encoding="utf-8")
             job.project_path = str(project_file)
 
-            if job.status != "cancelled":
+            if cancelled:
+                job.status = "cancelled"
+            else:
                 job.status = "done"
                 job.log_lines.append(_stamp(f"done in {job.elapsed:.0f}s"))
 

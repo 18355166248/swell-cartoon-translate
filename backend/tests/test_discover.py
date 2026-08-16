@@ -43,6 +43,25 @@ class TestRecursion:
         # Not merely excluded -- they should not appear as candidates at all.
         assert [c.path.name for c in discover(tmp_path)] == ["page-1.jpg"]
 
+    def test_a_series_folder_looks_empty_without_recursion(self, tree):
+        # The report that prompted this feature: pointing at the series folder
+        # found nothing, because every page lives one level down in a chapter.
+        assert discover(tree, recursive=False) == []
+        assert len([c for c in discover(tree, recursive=True) if c.included]) == 3
+
+    def test_chapters_stay_grouped_in_order(self, tmp_path):
+        # Reading order has to survive recursion: ch2's pages must not
+        # interleave with ch10's just because the page numbers collide.
+        for chapter in ("ch2", "ch10"):
+            for n in (1, 2):
+                make_image(tmp_path / chapter / f"page-{n}.jpg")
+        order = [
+            str(c.path.relative_to(tmp_path)).replace("\\", "/")
+            for c in discover(tmp_path, recursive=True)
+            if c.included
+        ]
+        assert [p.split("/")[0] for p in order] == ["ch2", "ch2", "ch10", "ch10"]
+
 
 class TestOutputGuard:
     def test_named_output_directory_is_skipped(self, tree):
@@ -75,6 +94,17 @@ class TestOutputGuard:
             ) if c.included
         ]
         assert any("_zh" in c.path.parts for c in included)
+
+    def test_output_inside_the_input_tree_is_excluded_by_path(self, tree):
+        # Measured on the real library: a recursive pass over the series
+        # folder saw 579 images, 289 of which were the previous run's output
+        # sitting in a nested _zh folder.
+        destination = tree / "ch1" / "_zh"
+        for n in (1, 2):
+            make_image(destination / f"page-{n}_zh.jpg")
+        results = discover(tree, recursive=True, exclude_dirs=[destination])
+        assert len([c for c in results if c.included]) == 3
+        assert len([c for c in results if not c.included]) == 2
 
 
 class TestFilters:

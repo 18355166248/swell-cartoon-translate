@@ -90,13 +90,38 @@ export interface BrowseEntry {
   name: string;
   path: string;
   images: number;
+  nested_images: number;
 }
 
 export interface BrowseResponse {
   path: string;
   parent: string | null;
   images: number;
+  nested_images: number;
   entries: BrowseEntry[];
+}
+
+export interface PreviewCandidate {
+  path: string;
+  name: string;
+  parent: string;
+  width: number;
+  height: number;
+  size: number;
+  reason: string;
+}
+
+export interface PreviewResponse {
+  summary: {
+    total: number;
+    included: number;
+    skipped: number;
+    reasons: Record<string, number>;
+    folders: { path: string; count: number }[];
+    estimated_seconds: number;
+  };
+  included: PreviewCandidate[];
+  skipped: PreviewCandidate[];
 }
 
 export interface Block {
@@ -168,6 +193,14 @@ export const api = {
 
   browse: (path?: string) =>
     request<BrowseResponse>(`/api/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+
+  /** Opens the OS folder dialog on the machine running the backend.
+   *  Legitimate only because that machine is this machine. */
+  pickFolder: (initial?: string) =>
+    request<{ path: string; cancelled: boolean }>("/api/pick-folder", {
+      method: "POST",
+      body: JSON.stringify({ initial: initial ?? "" }),
+    }),
 
   createJob: (body: JobRequest) =>
     request<Job>("/api/jobs", { method: "POST", body: JSON.stringify(body) }),
