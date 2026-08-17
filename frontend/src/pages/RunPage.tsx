@@ -77,18 +77,16 @@ function PreviewPanel({ preview }: { preview: PreviewResponse }) {
       )}
 
       {summary.folders.length > 0 && (
-        <ScrollArea className="max-h-32">
-          <div className="space-y-0.5">
-            {summary.folders.map((f) => (
-              <div key={f.path} className="flex justify-between gap-3 text-xs">
-                <span className="text-muted-foreground truncate font-mono" title={f.path}>
-                  {f.path}
-                </span>
-                <span className="shrink-0 tabular-nums">{f.count}</span>
-              </div>
-            ))}
-          </div>
-        </ScrollArea>
+        <Scroller rows={summary.folders.length} threshold={6} maxHeight="8rem">
+          {summary.folders.map((f) => (
+            <div key={f.path} className="flex justify-between gap-3 text-xs">
+              <span className="text-muted-foreground truncate font-mono" title={f.path}>
+                {f.path}
+              </span>
+              <span className="shrink-0 tabular-nums">{f.count}</span>
+            </div>
+          ))}
+        </Scroller>
       )}
 
       {preview.skipped.length > 0 && (
@@ -96,8 +94,8 @@ function PreviewPanel({ preview }: { preview: PreviewResponse }) {
           <summary className="text-muted-foreground cursor-pointer">
             查看被跳过的 {preview.skipped.length} 张
           </summary>
-          <ScrollArea className="mt-1.5 max-h-40">
-            <div className="space-y-0.5">
+          <div className="mt-1.5">
+            <Scroller rows={preview.skipped.length} threshold={8} maxHeight="11rem">
               {preview.skipped.map((c) => (
                 <div key={c.path} className="flex justify-between gap-3">
                   <span className="text-muted-foreground truncate font-mono" title={c.path}>
@@ -106,11 +104,46 @@ function PreviewPanel({ preview }: { preview: PreviewResponse }) {
                   <span className="shrink-0">{c.reason}</span>
                 </div>
               ))}
-            </div>
-          </ScrollArea>
+            </Scroller>
+          </div>
         </details>
       )}
     </div>
+  );
+}
+
+/**
+ * A list that scrolls internally once it gets long.
+ *
+ * Two things this exists to avoid:
+ *
+ * Radix `ScrollArea` renders its viewport at `height: 100%`, so a `max-h-*`
+ * class on it constrains nothing -- the component grows with its content and
+ * the overflow lands on the page instead. A scrolling ScrollArea needs a
+ * *fixed* height.
+ *
+ * But a fixed height applied unconditionally leaves a tall empty box under a
+ * two-line list, so short lists render as a plain block and only long ones get
+ * the scroller.
+ */
+function Scroller({
+  rows,
+  threshold,
+  maxHeight,
+  children,
+}: {
+  rows: number;
+  threshold: number;
+  maxHeight: string;
+  children: React.ReactNode;
+}) {
+  if (rows <= threshold) {
+    return <div className="space-y-0.5">{children}</div>;
+  }
+  return (
+    <ScrollArea style={{ height: maxHeight }} className="pr-2">
+      <div className="space-y-0.5">{children}</div>
+    </ScrollArea>
   );
 }
 

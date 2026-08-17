@@ -24,10 +24,42 @@ Linux / macOS：
 
 需要 **Python 3.11+**（`tomllib` 是 3.11 才进标准库的）。
 
-## 跑起来
+## 一键启动
+
+日常就用这一条，在**仓库根目录**执行：
 
 ```bash
-cd backend
+powershell -File scripts\dev.ps1
+```
+
+它会：装前端依赖（仅首次）→ 起后端 → **等后端真正能连上**（不是固定 sleep，
+模型加载耗时因机器而异）→ 起前端 → 打开浏览器。按 `Ctrl+C` 结束前端时会一并关掉后端。
+
+- 后端已经在跑：自动复用，不会起第二个
+- 不想自动开浏览器：加 `-NoBrowser`
+- 换端口：`-BackendPort 8001 -FrontendPort 5175`（改后端端口要同步改
+  `frontend/vite.config.ts` 里的代理目标）
+
+脚本里所有路径都相对脚本自身解析，所以**在哪个目录执行都一样**。
+
+### 想手动开两个终端
+
+下面两条同样在仓库根目录执行。用 `--app-dir` / `--prefix` 指定子目录，
+就不需要 `cd`——也就不会因为「已经在子目录里」而报 `找不到 backend\backend`：
+
+```bash
+python -m uvicorn ctt.server:app --port 8000 --app-dir backend
+```
+
+```bash
+npm --prefix frontend run dev
+```
+
+打开 http://localhost:5173
+
+### 命令行（不开界面）
+
+```bash
 python -m ctt.cli translate ..\assets -o ..\out          # 完整流程
 python -m ctt.cli detect ..\assets\en4.jpg --visualise   # 只跑检测，验证环境
 python -m ctt.cli config                                  # 看当前生效配置
@@ -390,6 +422,16 @@ ECONNREFUSED。`vite.config.ts` 里显式写 `server.host = "127.0.0.1"`。
 **`atomWithStorage` 默认不在初始化时读 localStorage。** 第一次渲染拿到的是默认值，
 之后才同步。这一帧足够坏事：目录选择器以空路径挂载、回退到列用户主目录、再把这个
 结果写回去，覆盖掉你存的路径。必须开 `getOnInit`。
+
+**Radix ScrollArea 上写 `max-h-*` 等于没写。** 它的 viewport 是
+`height: 100%`，所以组件会跟着内容长高，`max-height` 约束不到任何东西——试算面板
+里那 200 行「被跳过的文件」就是这样把整个页面撑爆的。要滚动必须给**固定高度**。
+但固定高度又会让两行的短列表下面留一大块空白，所以按行数决定要不要套滚动容器
+（`RunPage` 里的 `Scroller`）。
+
+**`loading="lazy"` 不解决 DOM 数量。** 它推迟的是图片*请求*，元素本身照样要布局。
+289 页的项目一次性渲染 289 个磁贴就会明显卡顿。结果页改成分页，每页只挂 60 个
+节点——实测翻到第 4 页仍然稳定 60 个。
 
 **文档里的启动命令别写 `cd 子目录 && ...`。** 已经在那个子目录里的时候就会报
 `找不到 backend\backend`。用 `--app-dir` / `--prefix` 指定目录，命令在哪都能跑。
