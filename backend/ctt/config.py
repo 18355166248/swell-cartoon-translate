@@ -147,12 +147,21 @@ class OutputConfig:
 
 
 @dataclass
+class RuntimeConfig:
+    """How much of the machine a run may take."""
+
+    profile: str = "balanced"
+    """performance | balanced | background. See ctt.runtime."""
+
+
+@dataclass
 class Config:
     target_lang: str = "zh-Hans"
     source_lang: str = "auto"
     models_dir: str = ""
     skip_thumbnails: bool = True
     min_page_bytes: int = 50_000
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     input: InputConfig = field(default_factory=InputConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
 
@@ -261,6 +270,7 @@ FIELD_DOCS = {
     "target_lang": "目标语言。zh-Hans 简体，zh-Hant 繁体",
     "source_lang": "auto 表示按整页多数字符判定，不逐句猜",
     "skip_thumbnails": "跳过漫画站附带的小缩略图。实测某话 410 个文件里有 126 个是垃圾图",
+    "runtime.profile": "background = 半数核心+最低优先级，实测只慢 2.5% 却少占 24% CPU，打游戏选它；balanced = 只降优先级不减线程，空闲时不损速；performance = 全速。内存占用与档位无关，模型本身就要约 6.4GB",
     "input.recursive": "递归所有子目录。指向系列文件夹即可一次翻完所有话",
     "input.min_bytes": "小于此体积的文件跳过。缩略图和横幅通常远小于正文页",
     "input.min_side": "宽或高任一小于此值就跳过。长条 webtoon 窄而极高，所以是分别限制两边而不是限制面积",
@@ -286,6 +296,7 @@ FIELD_CHOICES = {
     "detect.model": ["int8", "fp32", "small"],
     "typeset.align": ["center", "left", "right"],
     "output.layout": ["mirror", "nested", "sibling", "flat"],
+    "runtime.profile": ["performance", "balanced", "background"],
 }
 
 

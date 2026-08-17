@@ -35,6 +35,8 @@ export interface JobPageResult {
   bubbles: number;
   review_count: number;
   seconds: number;
+  /** Output already existed and was left alone. */
+  reused: boolean;
 }
 
 export interface SkippedFile {
@@ -239,6 +241,16 @@ export const api = {
   /** Cache-busted so a re-render after an edit is actually fetched. */
   renderUrl: (pageIndex: number, original = false, nonce = 0) =>
     `/api/pages/${pageIndex}/render?original=${original}&t=${nonce}`,
+
+  /** Thumbnail by absolute path, so the grid can show pages a running job
+   *  produces before any project file exists. */
+  thumbnailUrl: (path: string, size = 240) =>
+    `/api/thumbnail?path=${encodeURIComponent(path)}&size=${size}`,
+
+  runtimeProfiles: () =>
+    request<{ cores: number; profiles: { name: string; threads: number; description: string }[] }>(
+      "/api/runtime/profiles",
+    ),
 };
 
 export { ApiError };

@@ -392,7 +392,15 @@ def create_job(body: JobRequest) -> dict:
         from .ocr import build_router
         from .translate import Glossary, build_chain
 
+        from .runtime import threads_for
+
         glossary = Glossary(config.glossary)
+        # The profile decides how many cores the translator may use. Set here
+        # rather than in ctt.toml so switching profile takes effect without
+        # anyone having to know what n_threads should be.
+        llamacpp_kwargs = dataclass_kwargs(config.translate.llamacpp)
+        llamacpp_kwargs["n_threads"] = threads_for(config.runtime.profile)
+
         return Pipeline(
             detector=ComicDetector(variant=config.detect.model,
                                    cache_dir=config.models_dir or None),
@@ -400,7 +408,7 @@ def create_job(body: JobRequest) -> dict:
             translator=build_chain(
                 config.translate.backends,
                 glossary=glossary,
-                llamacpp=dataclass_kwargs(config.translate.llamacpp),
+                llamacpp=llamacpp_kwargs,
                 llm=dataclass_kwargs(config.translate.llm),
                 nllb=dataclass_kwargs(config.translate.nllb),
             ),
@@ -421,8 +429,68 @@ def create_job(body: JobRequest) -> dict:
         layout=config.output.layout,
         overwrite=config.output.overwrite,
         skipped=skipped,
+        profile=config.runtime.profile,
     )
     return job.to_dict()
+
+
+@lru_cache(maxsize=512)
+def _thumbnail_bytes(path: str, size: int, mtime: float) -> bytes:
+    """Downscaled JPEG of an output page.
+
+    `mtime` is part of the key rather than the body: it makes the cache
+    self-invalidating when a page is re-rendered, without anyone having to
+    remember to clear it.
+    """
+    image = cv2.imread(path)
+    if image is None:
+        raise HTTPException(404, f"cannot read {path}")
+    height, width = image.shape[:2]
+    scale = size / max(height, width)
+    if scale < 1:
+        image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    return cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 78])[1].tobytes()
+
+
+@app.get("/api/thumbnail")
+def thumbnail(path: str, size: int = 240) -> Response:
+    """Thumbnail for a finished page.
+
+    Serves by absolute path because the grid has to show pages as a running
+    job produces them, before any project file exists. Reads are confined to
+    directories this backend is actually working in -- a local tool still
+    should not be a general file-read endpoint for anything that can reach it.
+    """
+    from .jobs import MANAGER
+
+    target = Path(path).resolve()
+
+    allowed: list[Path] = []
+    for job in MANAGER.list():
+        allowed.append(Path(job.output_dir).resolve())
+        allowed.append(Path(job.input_root or job.output_dir).resolve())
+    project_path = STATE.get("project_path")
+    if project_path:
+        allowed.append(Path(str(project_path)).resolve().parent)
+    for page in _project().pages:
+        allowed.append(Path(page.image_path).resolve().parent)
+
+    if not any(root == target or root in target.parents for root in allowed):
+        raise HTTPException(403, "path is outside the directories in use")
+    if not target.is_file():
+        raise HTTPException(404, f"no such file: {target}")
+
+    body = _thumbnail_bytes(str(target), max(64, min(size, 1024)), target.stat().st_mtime)
+    return Response(body, media_type="image/jpeg",
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+@app.get("/api/runtime/profiles")
+def runtime_profiles() -> dict:
+    """Available CPU profiles, with the thread count each would use."""
+    from .runtime import describe, physical_cores
+
+    return {"cores": physical_cores(), "profiles": describe()}
 
 
 @app.get("/api/jobs")

@@ -66,6 +66,7 @@ class Job:
     input_root: str = ""
     layout: str = "mirror"
     overwrite: bool = False
+    profile: str = "balanced"
     skipped: list[SkippedFile] = field(default_factory=list)
     copied: int = 0
     reused: int = 0
@@ -194,6 +195,7 @@ class JobManager:
         layout: str = "mirror",
         overwrite: bool = False,
         skipped: list[SkippedFile] | None = None,
+        profile: str = "balanced",
     ) -> Job:
         """Queue a job and start it. Raises if one is already running."""
         with self._lock:
@@ -207,6 +209,7 @@ class JobManager:
                 layout=layout,
                 overwrite=overwrite,
                 skipped=skipped or [],
+                profile=profile,
             )
             self._jobs[job.id] = job
             self._current = job.id
@@ -280,6 +283,14 @@ class JobManager:
             # Copy filtered-out pages first: they need to be in place whether
             # or not the translation stage gets that far.
             self._copy_skipped(job, input_root, output)
+
+            # Set before the models load: llama.cpp and ONNX Runtime create
+            # their worker pools at load time, and those threads inherit the
+            # process priority in force when they are spawned.
+            from .runtime import apply_priority
+
+            applied = apply_priority(job.profile)
+            job.log_lines.append(_stamp(f"运行档位: {applied}"))
 
             job.stage = "loading models"
             pipeline = build_pipeline()

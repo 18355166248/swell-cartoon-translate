@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
+import { useAtomValue } from "jotai";
 import {
   ChevronLeft, ChevronRight, Loader2, Save, AlertTriangle, Eye, EyeOff,
+  LayoutGrid, Rows,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Block, type Project } from "@/lib/api";
+import { jobAtom, jobRunningAtom } from "@/state/atoms";
+import { PageGrid, fromJobResults } from "@/components/PageGrid";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -44,6 +49,9 @@ export function ResultsPage({ projectPath }: { projectPath: string }) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [path, setPath] = useState(projectPath);
+  const [gridView, setGridView] = useState(true);
+  const job = useAtomValue(jobAtom);
+  const running = useAtomValue(jobRunningAtom);
 
   const open = useCallback(async (target: string) => {
     if (!target) return;
@@ -99,6 +107,29 @@ export function ResultsPage({ projectPath }: { projectPath: string }) {
       toast.error("保存失败", { description: e instanceof Error ? e.message : String(e) });
     }
   };
+
+  // While a run is going there is no project yet, but its finished pages are
+  // already on disk. Showing them as they land is the difference between
+  // watching a progress bar and watching the work.
+  if (!project && job && job.results.length > 0) {
+    const items = fromJobResults(job.results, job.total);
+    return (
+      <div className="flex h-full flex-col">
+        <div className="border-border flex shrink-0 items-center justify-between gap-2 border-b px-5 py-2.5">
+          <div className="flex items-center gap-2 text-sm">
+            <Loader2 className={running ? "size-4 animate-spin" : "hidden"} />
+            <span>
+              翻译中 <span className="tabular-nums">{job.completed} / {job.total}</span>
+            </span>
+            <span className="text-muted-foreground text-xs">完成的页会陆续出现</span>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1">
+          <PageGrid items={items} selected={-1} onSelect={() => {}} />
+        </div>
+      </div>
+    );
+  }
 
   if (!project) {
     return (
@@ -159,6 +190,10 @@ export function ResultsPage({ projectPath }: { projectPath: string }) {
         </div>
 
         <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setGridView((v) => !v)}>
+            {gridView ? <Rows className="mr-1.5 size-3.5" /> : <LayoutGrid className="mr-1.5 size-3.5" />}
+            {gridView ? "单页" : "缩略图"}
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => setShowOriginal((v) => !v)}>
             {showOriginal ? <Eye className="mr-1.5 size-3.5" /> : <EyeOff className="mr-1.5 size-3.5" />}
             {showOriginal ? "看成品" : "看原图"}
@@ -169,7 +204,31 @@ export function ResultsPage({ projectPath }: { projectPath: string }) {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 gap-3 p-3 lg:grid-cols-[1fr_380px]">
+      {gridView && (
+        <div className="min-h-0 flex-1">
+          <PageGrid
+            items={project.pages.map((p, i) => ({
+              index: i,
+              name: p.image_path.split(/[\\/]/).pop() ?? "",
+              // The grid shows finished output, which for an opened project
+              // means re-rendering; the render endpoint is per index.
+              path: p.image_path,
+              reviewCount: p.blocks.filter(
+                (b) => b.kind === "text_bubble" && reviewReasons(b).length > 0,
+              ).length,
+              reused: false,
+            }))}
+            selected={pageIndex}
+            onSelect={(i) => {
+              setPageIndex(i);
+              setNonce((n) => n + 1);
+              setGridView(false);
+            }}
+          />
+        </div>
+      )}
+
+      <div className={cn("grid min-h-0 flex-1 gap-3 p-3 lg:grid-cols-[1fr_380px]", gridView && "hidden")}>
         {/* Its own scroller: a long webtoon strip is 14000px tall, so the
             image has to scroll without dragging the whole layout with it. */}
         <Card className="bg-viewer min-h-0 overflow-auto py-0">
