@@ -45,6 +45,17 @@ class PageResultSummary:
     bubbles: int
     review_count: int
     seconds: float
+    reused: bool = False
+    """Output already existed and was left alone."""
+
+
+@dataclass
+class SkippedFile:
+    """A file that was filtered out, and what became of it."""
+
+    path: str
+    reason: str
+    copied_to: str = ""
 
 
 @dataclass
@@ -52,6 +63,13 @@ class Job:
     id: str
     input_paths: list[str]
     output_dir: str
+    input_root: str = ""
+    layout: str = "mirror"
+    overwrite: bool = False
+    skipped: list[SkippedFile] = field(default_factory=list)
+    copied: int = 0
+    reused: int = 0
+    """Pages whose output already existed and were left alone."""
     status: JobStatus = "pending"
 
     page_index: int = 0
@@ -108,6 +126,13 @@ class Job:
             "error": self.error,
             "output_dir": self.output_dir,
             "project_path": self.project_path,
+            "layout": self.layout,
+            "copied": self.copied,
+            "reused": self.reused,
+            "skipped_files": [
+                {"path": s.path, "reason": s.reason, "copied_to": s.copied_to}
+                for s in self.skipped[:200]
+            ],
             "log": self.log_lines[-50:],
             "results": [
                 {
@@ -118,6 +143,7 @@ class Job:
                     "bubbles": r.bubbles,
                     "review_count": r.review_count,
                     "seconds": round(r.seconds, 1),
+                    "reused": r.reused,
                 }
                 for r in self.results
             ],
@@ -159,7 +185,16 @@ class JobManager:
         with self._lock:
             return self._busy_unlocked()
 
-    def submit(self, input_paths: list[str], output_dir: str, build_pipeline) -> Job:
+    def submit(
+        self,
+        input_paths: list[str],
+        output_dir: str,
+        build_pipeline,
+        input_root: str = "",
+        layout: str = "mirror",
+        overwrite: bool = False,
+        skipped: list[SkippedFile] | None = None,
+    ) -> Job:
         """Queue a job and start it. Raises if one is already running."""
         with self._lock:
             if self._busy_unlocked():
@@ -168,6 +203,10 @@ class JobManager:
                 id=uuid.uuid4().hex[:12],
                 input_paths=[str(p) for p in input_paths],
                 output_dir=str(output_dir),
+                input_root=str(input_root or output_dir),
+                layout=layout,
+                overwrite=overwrite,
+                skipped=skipped or [],
             )
             self._jobs[job.id] = job
             self._current = job.id
@@ -186,20 +225,65 @@ class JobManager:
         job.log_lines.append(_stamp("cancellation requested; finishing current page"))
         return True
 
+    def _copy_skipped(self, job: Job, input_root: Path, output: Path) -> None:
+        """Copy filtered-out pages into the output unchanged.
+
+        A chapter with holes is worse than one with a few untranslated pages,
+        and it downgrades a mis-tuned filter from lossy to cosmetic. Our own
+        previous output is excluded upstream via `Candidate.copyable`.
+        """
+        import shutil
+
+        from .outputs import copy_destination
+
+        for entry in job.skipped:
+            source = Path(entry.path)
+            target = copy_destination(source, input_root, output, job.layout)
+            try:
+                if target.exists() and target.stat().st_size == source.stat().st_size:
+                    entry.copied_to = str(target)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+                entry.copied_to = str(target)
+                job.copied += 1
+            except OSError as exc:
+                log.warning("could not copy %s: %s", source, exc)
+
+        if job.copied:
+            job.log_lines.append(_stamp(f"{job.copied} 张未翻译的图已原样复制到输出"))
+
     def _run(self, job: Job, build_pipeline) -> None:
         job.status = "running"
         job.started_at = time.time()
         job.log_lines.append(_stamp(f"job {job.id}: {job.total} page(s)"))
 
         try:
-            job.stage = "loading models"
-            pipeline = build_pipeline()
-            job.log_lines.append(_stamp(f"translators: {pipeline.translator.name}"))
+            from .outputs import copy_destination, destination as destination_for
+            from .types import Page, Project
 
             output = Path(job.output_dir)
             output.mkdir(parents=True, exist_ok=True)
+            input_root = Path(job.input_root)
+            project_file = output / "project.cttproj"
 
-            from .types import Project
+            # Carry forward pages from an earlier run so resuming produces a
+            # complete project, not just the pages this run happened to touch.
+            previous: dict[str, Page] = {}
+            if project_file.exists() and not job.overwrite:
+                try:
+                    prior = Project.model_validate_json(project_file.read_text("utf-8"))
+                    previous = {p.image_path: p for p in prior.pages}
+                except Exception:  # noqa: BLE001 - a corrupt file just means no reuse
+                    log.warning("could not read %s; starting fresh", project_file)
+
+            # Copy filtered-out pages first: they need to be in place whether
+            # or not the translation stage gets that far.
+            self._copy_skipped(job, input_root, output)
+
+            job.stage = "loading models"
+            pipeline = build_pipeline()
+            job.log_lines.append(_stamp(f"translators: {pipeline.translator.name}"))
 
             project = Project(
                 name=output.name,
@@ -224,9 +308,34 @@ class JobManager:
                 name = Path(source).name
                 started = time.time()
 
+                destination = destination_for(
+                    Path(source), input_root, output, job.layout
+                )
+                destination.parent.mkdir(parents=True, exist_ok=True)
+
+                if not job.overwrite and destination.exists():
+                    # Already translated by an earlier run. At ~36s a page,
+                    # redoing a finished chapter costs hours for no gain.
+                    job.reused += 1
+                    carried = previous.get(str(source))
+                    if carried:
+                        project.pages.append(carried)
+                    job.results.append(
+                        PageResultSummary(
+                            index=index,
+                            name=name,
+                            source_path=source,
+                            output_path=str(destination),
+                            bubbles=sum(1 for b in carried.blocks if b.translatable) if carried else 0,
+                            review_count=0,
+                            seconds=0.0,
+                            reused=True,
+                        )
+                    )
+                    continue
+
                 result = pipeline.run_page(source, on_stage=lambda s: setattr(job, "stage", s))
 
-                destination = output / f"{Path(source).stem}_zh.jpg"
                 cv2.imwrite(str(destination), result.image, [cv2.IMWRITE_JPEG_QUALITY, 92])
                 project.pages.append(result.page)
 
@@ -247,7 +356,8 @@ class JobManager:
                            f"{len(review)} need review, {time.time() - started:.1f}s")
                 )
 
-            project_file = output / "project.cttproj"
+            if job.reused:
+                job.log_lines.append(_stamp(f"{job.reused} 张已有成品，跳过未重翻"))
             project_file.write_text(project.model_dump_json(indent=2), encoding="utf-8")
             job.project_path = str(project_file)
 

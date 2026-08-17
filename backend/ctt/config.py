@@ -116,10 +116,34 @@ class InputConfig:
     recursive: bool = True
     """On by default: pointing at a series folder and having every chapter
     translated is the common case, and `skip_output_dirs` makes it safe."""
+    min_width: int = 0
     min_bytes: int = 50_000
     min_side: int = 600
     max_aspect: float = 4.0
     skip_output_dirs: bool = True
+
+
+@dataclass
+class OutputConfig:
+    """Where results are written, and what to do about earlier runs."""
+
+    layout: str = "mirror"
+    """mirror | nested | sibling | flat. See ctt.outputs."""
+
+    copy_skipped: bool = True
+    """Copy filtered-out pages into the output unchanged.
+
+    A chapter with holes in it is worse than one with a few untranslated
+    pages, and it makes a mis-tuned filter a cosmetic problem rather than a
+    lossy one. Our own previous output is never copied.
+    """
+
+    overwrite: bool = False
+    """Re-translate pages whose output already exists.
+
+    Off by default so a re-run resumes instead of repeating: at roughly 36
+    seconds a page, redoing a finished chapter costs hours for no gain.
+    """
 
 
 @dataclass
@@ -130,6 +154,7 @@ class Config:
     skip_thumbnails: bool = True
     min_page_bytes: int = 50_000
     input: InputConfig = field(default_factory=InputConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
 
     detect: DetectConfig = field(default_factory=DetectConfig)
     slicing: SliceConfig = field(default_factory=SliceConfig)
@@ -241,6 +266,10 @@ FIELD_DOCS = {
     "input.min_side": "宽或高任一小于此值就跳过。长条 webtoon 窄而极高，所以是分别限制两边而不是限制面积",
     "input.max_aspect": "宽/高 超过此值判为横幅、标题卡。只限制横向——竖条漫画常达 20:1，正是要保留的",
     "input.skip_output_dirs": "跳过 _zh / out / translated 这类目录。否则递归会把上次的成品再翻一遍，得到「译文的译文」",
+    "input.min_width": "宽度小于此值就跳过，0 = 不启用。仅当该系列扫图宽度一致时才可靠——实测某话正文页宽度从 1001 到 4184 都有，标题横幅反而有 1728 宽",
+    "output.layout": "mirror = 输出根目录下保留章节结构；nested = 各章节内建 _zh 子目录；sibling = 生成同级的 章节名_zh 目录；flat = 全部平铺（仅适合单目录）",
+    "output.copy_skipped": "把被过滤掉的图原样复制到输出。成品缺页比有几张没翻更糟，也让过滤器调错只是没翻、而不是丢内容",
+    "output.overwrite": "重跑时是否重新翻译已有成品。默认关闭 = 断点续跑；一页约 36 秒，整话重来要几小时",
     "detect.threshold": "调低会多检出误报，调高会漏掉小气泡",
     "slicing.max_height": "切片高度硬上限。这是长条 webtoon 不吃爆显存的关键",
     "ocr.languages": "多个引擎按识别置信度择优，代价是每个气泡多跑几次",
@@ -256,6 +285,7 @@ FIELD_CHOICES = {
     "target_lang": ["zh-Hans", "zh-Hant"],
     "detect.model": ["int8", "fp32", "small"],
     "typeset.align": ["center", "left", "right"],
+    "output.layout": ["mirror", "nested", "sibling", "flat"],
 }
 
 

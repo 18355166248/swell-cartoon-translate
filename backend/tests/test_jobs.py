@@ -1,5 +1,6 @@
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -138,6 +139,158 @@ class TestFailureAndCancel:
         job = manager.submit(pages, str(tmp_path / "out"), lambda: FakePipeline())
         assert wait_until(lambda: job.status == "done")
         assert manager.cancel(job.id) is False
+
+
+class TestOutputLayout:
+    def test_mirror_layout_keeps_chapter_folders(self, tmp_path):
+        root = tmp_path / "series"
+        for chapter in ("ch1", "ch2"):
+            (root / chapter).mkdir(parents=True)
+            (root / chapter / "p1.jpg").write_bytes(b"x")
+
+        manager = JobManager()
+        out = tmp_path / "out"
+        job = manager.submit(
+            [str(root / "ch1" / "p1.jpg"), str(root / "ch2" / "p1.jpg")],
+            str(out), lambda: FakePipeline(), input_root=str(root), layout="mirror",
+        )
+        assert wait_until(lambda: job.status == "done")
+
+        assert (out / "ch1" / "p1_zh.jpg").is_file()
+        assert (out / "ch2" / "p1_zh.jpg").is_file()
+
+    def test_pages_from_different_chapters_do_not_overwrite(self, tmp_path):
+        # Identical filenames across chapters are the norm, and flattening
+        # them silently loses every page but the last.
+        root = tmp_path / "series"
+        for chapter in ("ch1", "ch2"):
+            (root / chapter).mkdir(parents=True)
+            (root / chapter / "page.jpg").write_bytes(b"x")
+
+        manager = JobManager()
+        out = tmp_path / "out"
+        job = manager.submit(
+            [str(root / "ch1" / "page.jpg"), str(root / "ch2" / "page.jpg")],
+            str(out), lambda: FakePipeline(), input_root=str(root), layout="mirror",
+        )
+        assert wait_until(lambda: job.status == "done")
+        assert len(list(out.rglob("*_zh.jpg"))) == 2
+
+
+class TestCopySkipped:
+    def _setup(self, tmp_path):
+        from ctt.jobs import SkippedFile
+
+        root = tmp_path / "series" / "ch1"
+        root.mkdir(parents=True)
+        (root / "p1.jpg").write_bytes(b"page")
+        (root / "cover.jpg").write_bytes(b"cover-bytes")
+        return root, [SkippedFile(path=str(root / "cover.jpg"), reason="文件过小")]
+
+    def test_skipped_files_are_copied_into_the_output(self, tmp_path):
+        root, skipped = self._setup(tmp_path)
+        out = tmp_path / "out"
+        manager = JobManager()
+        job = manager.submit(
+            [str(root / "p1.jpg")], str(out), lambda: FakePipeline(),
+            input_root=str(root.parent), layout="mirror", skipped=skipped,
+        )
+        assert wait_until(lambda: job.status == "done")
+
+        # A chapter with holes is worse than one with untranslated pages.
+        copied = out / "ch1" / "cover.jpg"
+        assert copied.is_file()
+        assert copied.read_bytes() == b"cover-bytes"
+        assert job.copied == 1
+
+    def test_copied_file_sits_beside_the_translated_pages(self, tmp_path):
+        root, skipped = self._setup(tmp_path)
+        out = tmp_path / "out"
+        manager = JobManager()
+        job = manager.submit(
+            [str(root / "p1.jpg")], str(out), lambda: FakePipeline(),
+            input_root=str(root.parent), layout="mirror", skipped=skipped,
+        )
+        assert wait_until(lambda: job.status == "done")
+        assert (out / "ch1" / "cover.jpg").parent == (out / "ch1" / "p1_zh.jpg").parent
+
+    def test_copying_is_idempotent(self, tmp_path):
+        root, skipped = self._setup(tmp_path)
+        out = tmp_path / "out"
+        for _ in range(2):
+            manager = JobManager()
+            job = manager.submit(
+                [str(root / "p1.jpg")], str(out), lambda: FakePipeline(),
+                input_root=str(root.parent), layout="mirror",
+                skipped=[type(skipped[0])(path=s.path, reason=s.reason) for s in skipped],
+            )
+            assert wait_until(lambda: job.status == "done")
+        # Second run finds the copy already in place and does nothing.
+        assert job.copied == 0
+
+
+class TestResume:
+    def test_existing_output_is_not_retranslated(self, tmp_path):
+        root = tmp_path / "ch1"
+        root.mkdir()
+        for i in range(3):
+            (root / f"p{i}.jpg").write_bytes(b"x")
+        out = tmp_path / "out"
+        pages = [str(root / f"p{i}.jpg") for i in range(3)]
+
+        manager = JobManager()
+        first = manager.submit(pages, str(out), lambda: FakePipeline(),
+                               input_root=str(root), layout="mirror")
+        assert wait_until(lambda: first.status == "done")
+        assert first.reused == 0
+
+        # At ~36s a page, repeating a finished chapter costs hours for nothing.
+        second = manager.submit(pages, str(out), lambda: FakePipeline(),
+                                input_root=str(root), layout="mirror")
+        assert wait_until(lambda: second.status == "done")
+        assert second.reused == 3
+
+    def test_overwrite_forces_a_retranslation(self, tmp_path):
+        root = tmp_path / "ch1"
+        root.mkdir()
+        (root / "p0.jpg").write_bytes(b"x")
+        out = tmp_path / "out"
+        pages = [str(root / "p0.jpg")]
+
+        manager = JobManager()
+        first = manager.submit(pages, str(out), lambda: FakePipeline(),
+                               input_root=str(root), layout="mirror")
+        assert wait_until(lambda: first.status == "done")
+
+        second = manager.submit(pages, str(out), lambda: FakePipeline(),
+                                input_root=str(root), layout="mirror", overwrite=True)
+        assert wait_until(lambda: second.status == "done")
+        assert second.reused == 0
+
+    def test_resumed_project_still_lists_every_page(self, tmp_path):
+        # Otherwise the results tab shows only the pages this run touched.
+        root = tmp_path / "ch1"
+        root.mkdir()
+        for i in range(2):
+            (root / f"p{i}.jpg").write_bytes(b"x")
+        out = tmp_path / "out"
+        pages = [str(root / f"p{i}.jpg") for i in range(2)]
+
+        manager = JobManager()
+        first = manager.submit(pages, str(out), lambda: FakePipeline(),
+                               input_root=str(root), layout="mirror")
+        assert wait_until(lambda: first.status == "done")
+
+        second = manager.submit(pages, str(out), lambda: FakePipeline(),
+                                input_root=str(root), layout="mirror")
+        assert wait_until(lambda: second.status == "done")
+
+        from ctt.types import Project
+
+        project = Project.model_validate_json(
+            Path(second.project_path).read_text("utf-8")
+        )
+        assert len(project.pages) == 2
 
 
 class TestProgress:

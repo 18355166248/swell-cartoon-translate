@@ -303,6 +303,7 @@ def _resolve_inputs(body: JobRequest):
 
     recursive = body.recursive if body.recursive is not None else config.input.recursive
     filters = Filters(
+        min_width=config.input.min_width,
         min_bytes=config.input.min_bytes,
         min_side=config.input.min_side,
         max_aspect=config.input.max_aspect,
@@ -359,7 +360,7 @@ def preview_job(body: JobRequest) -> dict:
 
 @app.post("/api/jobs")
 def create_job(body: JobRequest) -> dict:
-    from .jobs import MANAGER
+    from .jobs import MANAGER, SkippedFile
 
     if MANAGER.busy:
         raise HTTPException(409, "a job is already running")
@@ -369,7 +370,19 @@ def create_job(body: JobRequest) -> dict:
     if body.limit:
         paths = paths[: body.limit]
 
-    if not paths:
+    # Copy filtered-out pages through so the output chapter has no holes.
+    # Our own previous output is never copied -- see Candidate.copyable.
+    skipped = (
+        [
+            SkippedFile(path=str(c.path), reason=c.reason)
+            for c in candidates
+            if not c.included and c.copyable
+        ]
+        if config.output.copy_skipped
+        else []
+    )
+
+    if not paths and not skipped:
         raise HTTPException(400, "no images matched")
 
     def build_pipeline():
@@ -398,7 +411,17 @@ def create_job(body: JobRequest) -> dict:
             detect_threshold=config.detect.threshold,
         )
 
-    job = MANAGER.submit(paths, body.output_dir, build_pipeline)
+    job = MANAGER.submit(
+        paths,
+        body.output_dir,
+        build_pipeline,
+        # The selected folder, not the output: relative paths are computed
+        # against it so a recursive run keeps its chapter structure.
+        input_root=body.input_dir or body.output_dir,
+        layout=config.output.layout,
+        overwrite=config.output.overwrite,
+        skipped=skipped,
+    )
     return job.to_dict()
 
 

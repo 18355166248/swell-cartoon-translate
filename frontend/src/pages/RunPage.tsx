@@ -189,7 +189,10 @@ export function RunPage() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">输入</CardTitle>
-          <CardDescription>选择漫画目录。小于 50KB 的缩略图会自动跳过。</CardDescription>
+          <CardDescription>
+            选择漫画目录。封面、横幅等会被过滤掉，但仍会原样复制到输出，成品不会缺页。
+            过滤阈值在「配置 → 输入」里调。
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <FolderPicker value={inputDir} onChange={handleFolder} />
@@ -316,6 +319,20 @@ export function RunPage() {
                   <span>已用 {formatDuration(job.elapsed)}</span>
                   {running && <span>{formatRemaining(job.eta)}</span>}
                 </div>
+                {(job.reused > 0 || job.copied > 0) && (
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {job.reused > 0 && (
+                      <Badge variant="outline" className="font-normal">
+                        {job.reused} 张已有成品，跳过
+                      </Badge>
+                    )}
+                    {job.copied > 0 && (
+                      <Badge variant="outline" className="font-normal">
+                        {job.copied} 张未翻译，已复制
+                      </Badge>
+                    )}
+                  </div>
+                )}
               </div>
 
               {running && job.eta !== null && (

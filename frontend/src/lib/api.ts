@@ -37,11 +37,24 @@ export interface JobPageResult {
   seconds: number;
 }
 
+export interface SkippedFile {
+  path: string;
+  reason: string;
+  /** Empty until the copy happens. */
+  copied_to: string;
+}
+
 export interface Job {
   id: string;
   status: JobStatus;
   total: number;
   completed: number;
+  /** Pages whose output already existed and were left alone. */
+  reused: number;
+  /** Filtered-out pages copied through unchanged. */
+  copied: number;
+  layout: string;
+  skipped_files: SkippedFile[];
   page_index: number;
   page_name: string;
   stage: string;

@@ -34,10 +34,17 @@ class Candidate:
     size: int = 0
     reason: str = ""
     """Empty means included."""
+    copyable: bool = True
+    """Whether a skipped file should still be copied to the output.
 
-    @property
-    def included(self) -> bool:
-        return not self.reason
+    True for files that are part of the chapter but carry no dialogue worth
+    translating -- covers, banners, credit cards. Copying them keeps the
+    output readable end to end, and means a filter that guesses wrong costs
+    an untranslated page rather than a missing one.
+
+    False for files that are not source material at all: our own previous
+    output. Copying those would duplicate them into the new run.
+    """
 
     def to_dict(self) -> dict:
         return {
@@ -48,11 +55,26 @@ class Candidate:
             "height": self.height,
             "size": self.size,
             "reason": self.reason,
+            "copyable": self.copyable,
         }
+
+    @property
+    def included(self) -> bool:
+        return not self.reason
 
 
 @dataclass
 class Filters:
+    min_width: int = 0
+    """Smallest allowed width, in pixels. 0 disables the check.
+
+    Useful when a series is scanned at a consistent width, since anything
+    narrower is then chrome rather than a page. Off by default because that
+    consistency cannot be assumed: measured across one real chapter the pages
+    ranged from 1001px to 4184px wide, and its title banner was 1728px --
+    wider than the narrowest genuine page. Width is a good filter only when
+    you have looked at the distribution first.
+    """
     min_bytes: int = 50_000
     min_side: int = 600
     """Smallest allowed width or height.
@@ -125,10 +147,12 @@ def discover(
             for root_dir in excluded_roots
         ):
             candidate.reason = "在输出目录内"
+            candidate.copyable = False
         elif filters.skip_output_dirs and any(
             part.lower() in OUTPUT_DIR_NAMES for part in path.parts
         ):
             candidate.reason = "疑似输出目录"
+            candidate.copyable = False
         elif candidate.size < filters.min_bytes:
             candidate.reason = f"文件过小 {candidate.size // 1024}KB"
         else:
@@ -136,6 +160,9 @@ def discover(
             candidate.width, candidate.height = width, height
             if width == 0:
                 candidate.reason = "无法读取"
+                candidate.copyable = False
+            elif filters.min_width and width < filters.min_width:
+                candidate.reason = f"宽度不足 {width}px"
             elif min(width, height) < filters.min_side:
                 candidate.reason = f"尺寸过小 {width}×{height}"
             elif height > 0 and width / height > filters.max_aspect:
