@@ -63,7 +63,7 @@ class LlamaCppConfig:
     n_gpu_layers: int = 0
     """0 keeps the GPU completely free. Raise only when nothing else needs it."""
     n_threads: int = 6
-    temperature: float = 0.3
+    temperature: float = 0.0
     max_tokens: int = 1024
 
 

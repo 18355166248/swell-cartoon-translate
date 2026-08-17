@@ -50,7 +50,10 @@ class LlamaCppTranslator:
         n_ctx: int = 4096,
         n_gpu_layers: int = 0,
         n_threads: int | None = None,
-        temperature: float = 0.3,
+        # Greedy by default. Translation has a right answer, so sampling only
+        # adds variance; it also measured faster (9.6s vs 10.5s on the same
+        # input) and makes a re-run reproducible.
+        temperature: float = 0.0,
         max_tokens: int = 1024,
         verbose: bool = False,
     ):
@@ -192,23 +195,32 @@ class LlamaCppTranslator:
         # model to repair its own previous answer reliably produced that answer
         # again, verbatim; giving it the English original and naming the words
         # it skipped gives it something to actually do.
-        listing = "\n".join(
-            f"{n + 1}. {texts[i]}" for n, i in enumerate(indices)
-        )
         skipped = sorted({w for words in stragglers.values() for w in words})
         name = language_name(target)
-        instruction = (
-            f"Translate each numbered line into {name}.\n"
-            f"A previous attempt left these words untranslated: {', '.join(skipped)}.\n"
-            f"Every word must appear in {name}. Do not leave any English in the output, "
-            "including interjections, exclamations and slang.\n"
-            'Return ONLY a JSON object mapping each number to its translation, e.g. {"1": "..."}.'
+
+        # The retry note goes in the *user* message so the system prompt stays
+        # byte-identical to the main call. llama.cpp caches the prompt prefix,
+        # and a second system prompt evicts it: measured over five pages,
+        # alternating two system prompts cost 29.2s of prompt processing where
+        # keeping one cost 10.3s. Same instruction, same model -- only its
+        # placement changes.
+        listing = "\n".join(f"{n + 1}. {texts[i]}" for n, i in enumerate(indices))
+        listing += (
+            f"\n\n(Retry: a previous attempt left these words untranslated — "
+            f"{', '.join(skipped)}. Every word must appear in {name}, including "
+            "interjections, exclamations and slang.)"
+        )
+        system = SYSTEM_PROMPT.format(
+            target=name,
+            glossary=f"\n{self.glossary.as_prompt_hint(texts)}"
+            if self.glossary.as_prompt_hint(texts)
+            else "",
         )
 
         try:
             response = llm.create_chat_completion(
                 messages=[
-                    {"role": "system", "content": instruction},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": listing},
                 ],
                 temperature=self.temperature,
