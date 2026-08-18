@@ -269,7 +269,10 @@ def put_config(body: ConfigUpdate) -> dict:
         config.glossary = body.glossary
 
     target = Path(body.path or config.source_path or (Path.cwd() / CONFIG_FILE))
-    target.write_text(to_toml(config), encoding="utf-8")
+    # Pass the current text so tomlkit patches values in place. Without it the
+    # document is regenerated and every comment in the file is lost.
+    existing = target.read_text(encoding="utf-8") if target.exists() else None
+    target.write_text(to_toml(config, existing), encoding="utf-8")
     return {"saved": str(target), "fields": describe(config), "glossary": config.glossary}
 
 

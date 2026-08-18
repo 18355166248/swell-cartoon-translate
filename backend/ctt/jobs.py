@@ -261,6 +261,7 @@ class JobManager:
         job.started_at = time.time()
         job.log_lines.append(_stamp(f"job {job.id}: {job.total} page(s)"))
 
+        pipeline = None
         try:
             from .outputs import copy_destination, destination as destination_for
             from .types import Page, Project
@@ -385,11 +386,40 @@ class JobManager:
             log.exception("job %s failed", job.id)
             job.log_lines.extend(traceback.format_exc().splitlines()[-6:])
         finally:
+            # Release the model explicitly rather than waiting for the garbage
+            # collector. On the GPU profile the translator holds ~2GB of VRAM,
+            # and the whole point of switching profiles is to hand the card
+            # back -- which does not happen if the weights are still resident
+            # because nothing dropped the last reference yet.
+            _release(pipeline)
+
             job.stage = ""
             job.finished_at = time.time()
             with self._lock:
                 if self._current == job.id:
                     self._current = None
+
+
+def _release(pipeline) -> None:
+    """Close whatever a pipeline is holding open.
+
+    Best-effort by design: a job that finished successfully must not be
+    reported as failed because cleanup hit a snag.
+    """
+    translator = getattr(pipeline, "translator", None)
+    # A chain wraps several backends; a bare translator is its own backend.
+    backends = getattr(translator, "backends", None) or ([translator] if translator else [])
+    for backend in backends:
+        close = getattr(backend, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("could not release %s: %s", type(backend).__name__, exc)
+
+    import gc
+
+    gc.collect()
 
 
 def _stamp(message: str) -> str:

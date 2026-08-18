@@ -49,7 +49,7 @@ install_group() {
   if has_module "$probe"; then ok "$name"; else fail "$name 安装失败: pip install $*"; fi
 }
 
-install_group "核心" cv2          numpy opencv-python-headless pillow pydantic
+install_group "核心" cv2          numpy opencv-python-headless pillow pydantic tomlkit
 install_group "检测" onnxruntime  onnxruntime huggingface-hub
 install_group "OCR"  paddleocr    paddlepaddle paddleocr
 install_group "翻译" llama_cpp    llama-cpp-python

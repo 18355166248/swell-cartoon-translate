@@ -123,3 +123,75 @@ class TestAssign:
         config = Config()
         _assign(config, "skip_thumbnails", False)
         assert config.skip_thumbnails is False
+
+
+class TestCommentPreservation:
+    """Saving from the settings UI must not delete the file's documentation.
+
+    The first version regenerated the document from scratch, which wiped 82
+    lines of measurements and reasoning the moment anyone changed a setting
+    in the browser.
+    """
+
+    ANNOTATED = '''# 顶部说明
+target_lang = "zh-Hans"
+
+[runtime]
+# 这段注释解释了为什么默认是 background
+profile = "background"
+gpu_layers = -1
+
+[detect]
+threshold = 0.35   # 行尾注释
+'''
+
+    def test_comments_survive_a_round_trip(self, tmp_path):
+        from ctt.config import load, to_toml
+
+        path = write(tmp_path, self.ANNOTATED)
+        config, _ = load(path, use_env=False)
+        config.runtime.profile = "performance"
+
+        result = to_toml(config, path.read_text(encoding="utf-8"))
+
+        assert "# 顶部说明" in result
+        assert "这段注释解释了为什么默认是 background" in result
+        assert "行尾注释" in result
+
+    def test_the_changed_value_is_actually_written(self, tmp_path):
+        from ctt.config import load, to_toml
+
+        path = write(tmp_path, self.ANNOTATED)
+        config, _ = load(path, use_env=False)
+        config.runtime.profile = "performance"
+        config.detect.threshold = 0.5
+
+        path.write_text(to_toml(config, path.read_text(encoding="utf-8")), encoding="utf-8")
+        reloaded, warnings = load(path, use_env=False)
+
+        assert warnings == []
+        assert reloaded.runtime.profile == "performance"
+        assert reloaded.detect.threshold == 0.5
+
+    def test_works_when_there_is_no_file_yet(self, tmp_path):
+        from ctt.config import Config, load, to_toml
+
+        text = to_toml(Config(), None)
+        path = tmp_path / "ctt.toml"
+        path.write_text(text, encoding="utf-8")
+        reloaded, warnings = load(path, use_env=False)
+        assert warnings == []
+        assert reloaded.target_lang == "zh-Hans"
+
+    def test_glossary_edits_round_trip(self, tmp_path):
+        from ctt.config import load, to_toml
+
+        path = write(tmp_path, self.ANNOTATED + '\n[glossary]\n# 人名表\nLIAM = "利亚姆"\n')
+        config, _ = load(path, use_env=False)
+        config.glossary = {"EMMA": "艾玛"}
+
+        path.write_text(to_toml(config, path.read_text(encoding="utf-8")), encoding="utf-8")
+        reloaded, _ = load(path, use_env=False)
+
+        assert reloaded.glossary == {"EMMA": "艾玛"}
+        assert "# 人名表" in path.read_text(encoding="utf-8")

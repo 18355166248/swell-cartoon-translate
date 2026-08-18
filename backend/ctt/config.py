@@ -308,41 +308,42 @@ FIELD_CHOICES = {
 }
 
 
-def to_toml(config: Config) -> str:
-    """Serialise back to ctt.toml.
+def to_toml(config: Config, existing: str | None = None) -> str:
+    """Serialise back to ctt.toml, keeping the file's comments.
 
-    Hand-rolled rather than via a library: tomllib is read-only in the stdlib,
-    and this document is small and entirely known.
+    `existing` is the current file's text. When given, values are patched into
+    it in place via tomlkit, so the comments survive a save from the settings
+    UI. Regenerating the document from scratch instead -- which this used to do
+    -- silently deleted 82 lines of measurements and reasoning the first time
+    anyone touched a setting in the browser.
+
+    Falls back to generating a plain document when there is no file yet.
     """
-    def fmt(value: Any) -> str:
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        if isinstance(value, (int, float)):
-            return str(value)
-        if isinstance(value, list):
-            return "[" + ", ".join(f'"{v}"' for v in value) + "]"
-        return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+    import tomlkit
 
-    lines = ["# 由 Web 配置页生成。注释见 README。", ""]
-    sections: dict[str, list[str]] = {"": []}
+    document = tomlkit.parse(existing) if existing else tomlkit.document()
 
     for field_info in describe(config):
-        section = field_info["section"]
-        sections.setdefault(section, []).append(
-            f'{field_info["name"]} = {fmt(field_info["value"])}'
-        )
-
-    lines.extend(sections.pop("", []))
-    for section, entries in sections.items():
-        lines.append("")
-        lines.append(f"[{section}]")
-        lines.extend(entries)
+        *sections, name = field_info["path"].split(".")
+        table = document
+        for section in sections:
+            if section not in table:
+                table[section] = tomlkit.table()
+            table = table[section]
+        table[name] = field_info["value"]
 
     if config.glossary:
-        lines.extend(["", "[glossary]"])
-        lines.extend(f'{k} = {fmt(v)}' for k, v in config.glossary.items())
+        if "glossary" not in document:
+            document["glossary"] = tomlkit.table()
+        glossary = document["glossary"]
+        for key in [k for k in glossary if k not in config.glossary]:
+            del glossary[key]
+        for key, value in config.glossary.items():
+            glossary[key] = value
+    elif "glossary" in document:
+        del document["glossary"]
 
-    return "\n".join(lines) + "\n"
+    return tomlkit.dumps(document)
 
 
 def find_config(start: Path | None = None) -> Path | None:

@@ -314,3 +314,74 @@ class TestProgress:
         for key in ("id", "status", "total", "completed", "stage", "stages",
                     "elapsed", "eta", "results", "log", "project_path"):
             assert key in body
+
+
+class TestRelease:
+    """The GPU profile holds ~2GB of VRAM, so a finished job must let go of it.
+
+    Waiting for the garbage collector is not good enough: switching profile to
+    play a game only frees the card if the weights are actually dropped.
+    """
+
+    def test_translator_is_closed_when_a_job_finishes(self, pages, tmp_path):
+        closed = []
+
+        class ClosablePipeline(FakePipeline):
+            def __init__(self):
+                super().__init__()
+                chain = type("Chain", (), {})()
+                chain.name = "fake"
+                backend = type("Backend", (), {})()
+                backend.close = lambda: closed.append(True)
+                chain.backends = [backend]
+                self.translator = chain
+
+        manager = JobManager()
+        job = manager.submit(pages, str(tmp_path / "out"), ClosablePipeline)
+        assert wait_until(lambda: job.status == "done")
+        assert closed, "the translator was never released"
+
+    def test_translator_is_closed_when_a_job_fails(self, pages, tmp_path):
+        closed = []
+
+        class FailingPipeline(FakePipeline):
+            def __init__(self):
+                super().__init__(fail=True)
+                chain = type("Chain", (), {})()
+                chain.name = "fake"
+                backend = type("Backend", (), {})()
+                backend.close = lambda: closed.append(True)
+                chain.backends = [backend]
+                self.translator = chain
+
+        manager = JobManager()
+        job = manager.submit(pages, str(tmp_path / "out"), FailingPipeline)
+        assert wait_until(lambda: job.status == "failed")
+        assert closed, "a failed job must still release the card"
+
+    def test_a_close_that_raises_does_not_fail_the_job(self, pages, tmp_path):
+        class BadClosePipeline(FakePipeline):
+            def __init__(self):
+                super().__init__()
+                chain = type("Chain", (), {})()
+                chain.name = "fake"
+                backend = type("Backend", (), {})()
+                def boom():
+                    raise RuntimeError("close blew up")
+                backend.close = boom
+                chain.backends = [backend]
+                self.translator = chain
+
+        manager = JobManager()
+        job = manager.submit(pages, str(tmp_path / "out"), BadClosePipeline)
+        assert wait_until(lambda: job.status == "done"), "cleanup must not mark it failed"
+
+    def test_release_survives_a_pipeline_that_never_built(self, tmp_path):
+        # build_pipeline() itself can raise; the finally block still runs.
+        def explode():
+            raise RuntimeError("no models")
+
+        manager = JobManager()
+        job = manager.submit(["x.jpg"], str(tmp_path / "out"), explode)
+        assert wait_until(lambda: job.status == "failed")
+        assert "no models" in job.error

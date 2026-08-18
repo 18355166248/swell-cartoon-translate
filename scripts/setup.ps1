@@ -59,7 +59,7 @@ Step "安装 Python 依赖"
 
 # 分组安装：某一组失败不影响其它组，且能准确报出是哪一组坏了。
 $groups = @(
-    @{ Name = "核心";   Args = @("numpy", "opencv-python-headless", "pillow", "pydantic"); Probe = "cv2" }
+    @{ Name = "核心";   Args = @("numpy", "opencv-python-headless", "pillow", "pydantic", "tomlkit"); Probe = "cv2" }
     @{ Name = "检测";   Args = @("onnxruntime", "huggingface-hub");                        Probe = "onnxruntime" }
     @{ Name = "OCR";    Args = @("paddlepaddle", "paddleocr");                             Probe = "paddleocr" }
     @{ Name = "翻译";   Args = @("llama-cpp-python", "--extra-index-url",

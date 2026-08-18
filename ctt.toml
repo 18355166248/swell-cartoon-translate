@@ -38,7 +38,7 @@ models_dir = ""
 #
 # 内存和档位无关：实测 n_ctx 从 512 到 4096，常驻内存只从 6383MB 变到 6594MB，
 # 那 6.4GB 基本全是模型权重。想少占内存只能换更小的模型。
-profile = "background"
+profile = "performance"
 
 # GPU 卸载层数，-1 = 按空闲显存自动决定（上限 12）。
 # 只有 performance 档会用 GPU，其余档位强制为 0——这就是玩游戏时的开关。
