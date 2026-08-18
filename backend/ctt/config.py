@@ -153,6 +153,13 @@ class RuntimeConfig:
     profile: str = "balanced"
     """performance | balanced | background. See ctt.runtime."""
 
+    gpu_layers: int = -1
+    """Layers to offload when the profile allows the GPU.
+
+    -1 sizes it from free VRAM. Only `performance` uses the GPU at all, so
+    switching away from it is what frees the card for a game.
+    """
+
 
 @dataclass
 class Config:
@@ -270,6 +277,7 @@ FIELD_DOCS = {
     "target_lang": "目标语言。zh-Hans 简体，zh-Hant 繁体",
     "source_lang": "auto 表示按整页多数字符判定，不逐句猜",
     "skip_thumbnails": "跳过漫画站附带的小缩略图。实测某话 410 个文件里有 126 个是垃圾图",
+    "runtime.gpu_layers": "GPU 卸载层数，-1 = 按空闲显存自动决定（上限 12）。只有 performance 档会用 GPU；实测 12 层最优（1.54x），再多反而变慢——显存不够开始溢出",
     "runtime.profile": "background = 半数核心+最低优先级，实测只慢 2.5% 却少占 24% CPU，打游戏选它；balanced = 只降优先级不减线程，空闲时不损速；performance = 全速。内存占用与档位无关，模型本身就要约 6.4GB",
     "input.recursive": "递归所有子目录。指向系列文件夹即可一次翻完所有话",
     "input.min_bytes": "小于此体积的文件跳过。缩略图和横幅通常远小于正文页",

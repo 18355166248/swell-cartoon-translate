@@ -5,47 +5,19 @@
 针对 **GTX 1650 SUPER (4GB) + 16GB 内存** 这类配置设计，目标是解决 BallonsTranslator
 在该硬件上「卡顿」与「翻译效果差」两个问题。
 
-## 一键初始化
-
-换电脑后跑这一个脚本：装依赖、下模型、自检。
-
-```bash
-powershell -File scripts\setup.ps1
-```
-
-Linux / macOS：
-
-```bash
-./scripts/setup.sh
-```
-
-**幂等设计，重复跑是安全的**——已装好的会跳过。所以中途断网或下载失败，直接重跑
-即可续传，不用先清理。只想搭环境不下 4.7GB 模型：加 `-SkipModels` / `--skip-models`。
-
-需要 **Python 3.11+**（`tomllib` 是 3.11 才进标准库的）。
-
 ## 一键启动
 
-日常就用这一条，在**仓库根目录**执行：
+**日常就用这一条**，前后端一起起，等后端真正可连再开浏览器，Ctrl+C 一并关掉：
 
 ```bash
 powershell -File scripts\dev.ps1
 ```
 
-它会：装前端依赖（仅首次）→ 起后端 → **等后端真正能连上**（不是固定 sleep，
-模型加载耗时因机器而异）→ 起前端 → 打开浏览器。按 `Ctrl+C` 结束前端时会一并关掉后端。
+打开 http://localhost:5173 。已经有后端在跑就直接复用，不会重复启动。
 
-- 后端已经在跑：自动复用，不会起第二个
-- 不想自动开浏览器：加 `-NoBrowser`
-- 换端口：`-BackendPort 8001 -FrontendPort 5175`（改后端端口要同步改
-  `frontend/vite.config.ts` 里的代理目标）
-
-脚本里所有路径都相对脚本自身解析，所以**在哪个目录执行都一样**。
-
-### 想手动开两个终端
-
-下面两条同样在仓库根目录执行。用 `--app-dir` / `--prefix` 指定子目录，
-就不需要 `cd`——也就不会因为「已经在子目录里」而报 `找不到 backend\backend`：
+脚本里所有路径都相对它自己解析，**在哪个目录执行都一样**。
+想手动分开起也行，下面两条同样与当前目录无关（用 `--app-dir` / `--prefix`
+指定子目录，就不会出现「已经在 backend 里还要 cd backend」的报错）：
 
 ```bash
 python -m uvicorn ctt.server:app --port 8000 --app-dir backend
@@ -55,15 +27,28 @@ python -m uvicorn ctt.server:app --port 8000 --app-dir backend
 npm --prefix frontend run dev
 ```
 
-打开 http://localhost:5173
-
-### 命令行（不开界面）
+不想开界面、直接命令行跑：
 
 ```bash
-python -m ctt.cli translate ..\assets -o ..\out          # 完整流程
-python -m ctt.cli detect ..\assets\en4.jpg --visualise   # 只跑检测，验证环境
-python -m ctt.cli config                                  # 看当前生效配置
+python -m ctt.cli translate <目录> -o out/    # 完整流程
+python -m ctt.cli config                       # 看当前生效配置
+python -m ctt.cli detect <图片> --visualise    # 只跑检测，验证环境
 ```
+
+## 换电脑：一键初始化
+
+装依赖、下模型、自检，跑这一个脚本：
+
+```bash
+powershell -File scripts\setup.ps1
+```
+
+Linux / macOS 用 `./scripts/setup.sh`。
+
+**幂等，重复跑是安全的**——已装好的会跳过，所以中途断网直接重跑即可续传。
+只想搭环境不下 4.7GB 模型：加 `-SkipModels` / `--skip-models`。
+
+需要 **Python 3.11+**（`tomllib` 是 3.11 才进标准库的）。
 
 密钥只从环境变量读，不进配置文件：
 
@@ -228,7 +213,7 @@ python -m http.server 5173 --directory frontend
 核心设计：**项目文档是唯一真相，渲染图是一次性的**。每次编辑都从原图重新合成，
 所以反复调整不会像「在上一次渲染结果上继续画」那样逐渐劣化。
 
-## 实测记录（本机 CPU，未启用 GPU）
+## 实测记录（纯 CPU 基准，GPU 见下节）
 
 | 阶段 | english.jpg 3200×2200 (2 气泡) | en2.jpg 720×10000 (3 气泡) |
 |---|---|---|
@@ -314,6 +299,60 @@ CUDA 构建（511MB，`whl/cu124`）。
 
 **批量翻译没有收益。** 把多页对白合并成一次调用只省 1%，说明瓶颈是生成速度而非
 prompt 开销。真要提速只能换更小的模型或上 GPU。
+
+## GPU 卸载（可开关）
+
+绑在运行档位上：**只有 `performance` 档用 GPU，其余档位强制为 0**——切档就是把
+显卡还给游戏的开关。界面上在「翻译」页启动按钮旁边，改完立即生效。
+
+实测（4GB GTX 1650 SUPER，约 2.2GB 空闲）：
+
+| 层数 | 耗时 | 提速 | 显存 | 与 CPU 输出一致 |
+|---|---|---|---|---|
+| 0 | 36.9s | 1.00x | — | 基准 |
+| 8 | 29.0s | 1.27x | ~1.7GB | 是 |
+| **12** | **23.9s** | **1.54x** | **~2.0GB** | **是** |
+| 16 | 27.0s | 1.37x | ~2.3GB | 是 |
+| 20 | 27.3s | 1.35x | ~2.7GB | 否 |
+| 28 | 35.8s | 1.03x | ~2.6GB | 否 |
+
+两点值得记住：
+
+**超过 12 层反而变慢。** 显存不够就开始来回搬数据，搬运的代价超过卸载省下的算力。
+`gpu_layers = -1` 会按当前空闲显存自动决定，上限就是 12。
+
+**GPU 卸载不是逐位一致的。** 我一开始以为它「同一模型同一权重，质量中性 by
+construction」——错了。CUDA 和 CPU 内核舍入方式不同，层数一多就会翻转某个 token：
+
+```
+CPU / ≤16 层: 你得填满我们所有的空缺才行，利亚姆。
+20 层以上:    你得把我们所有的窟窿都填满才行，利亚姆。
+```
+
+（后者其实更贴近原文 "SATISFY ALL OF OUR HOLES"，所以不是变差，但确实不是同一个
+输出。）12 层是实测仍与 CPU 完全一致的最后一档，所以上限定在这里。
+
+### 安装
+
+CUDA 构建不随项目自动装，因为它不小：wheel 0.89GB + CUDA 运行时 0.97GB ≈ **1.9GB**。
+
+```bash
+pip install --force-reinstall --no-deps llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+```
+
+```bash
+pip install nvidia-cuda-runtime-cu12 nvidia-cublas-cu12
+```
+
+**不需要装 CUDA Toolkit**，只要显卡驱动。那两个 pip 包就带了运行时 DLL。
+
+不想要了、要收回这 1.9GB：
+
+```bash
+powershell -File scripts\uninstall.ps1 -CpuOnly
+```
+
+翻译仍然可用，只是回到纯 CPU——`balanced` / `background` 档本来走的就是这条路。
 
 ## 踩过的坑（都已修复并有回归测试）
 

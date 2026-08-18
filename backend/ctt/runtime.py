@@ -36,6 +36,13 @@ class Profile:
     """Higher is politer. Mapped to Windows priority classes below."""
     thread_fraction: float
     """Share of physical cores to use, when the caller asks for a thread count."""
+    gpu: bool
+    """Whether this profile may offload layers to the GPU.
+
+    Off for anything but `performance`: the card is what a game needs, and
+    offloading takes ~2GB of a 4GB board. Switching profile is how you hand
+    it back.
+    """
     description: str
 
 
@@ -53,20 +60,43 @@ class Profile:
 # waiting on RAM anyway.
 _PROFILES: dict[str, Profile] = {
     "performance": Profile(
-        "performance", nice=0, thread_fraction=1.0,
-        description="全速、普通优先级。挂机跑用这个",
+        "performance", nice=0, thread_fraction=1.0, gpu=True,
+        description="全速 + GPU 卸载。实测 1.54x（36.9s → 23.9s），占约 2GB 显存。"
+                    "挂机跑用这个，玩游戏前切走",
     ),
     "balanced": Profile(
-        "balanced", nice=10, thread_fraction=1.0,
-        description="线程数不变，只降优先级。空闲时和全速一样快（实测 19.8s vs 19.9s），"
-                    "你要用机器时系统会先让给你",
+        "balanced", nice=10, thread_fraction=1.0, gpu=False,
+        description="纯 CPU，线程数不变，只降优先级。空闲时和全速一样快"
+                    "（实测 19.8s vs 19.9s），你要用机器时系统会先让给你。显存完全不占",
     ),
     "background": Profile(
-        "background", nice=19, thread_fraction=0.5,
-        description="只用一半核心 + 最低优先级。实测只慢 2.5%（20.4s）却少占 24% CPU——"
-                    "这个负载卡在内存带宽上，多给核心也是在等内存。打游戏建议选这个",
+        "background", nice=19, thread_fraction=0.5, gpu=False,
+        description="纯 CPU，只用一半核心 + 最低优先级。实测只慢 2.5%（20.4s）"
+                    "却少占 24% CPU——这个负载卡在内存带宽上，多给核心也是在等内存。"
+                    "打游戏选这个",
     ),
 }
+
+MAX_GPU_LAYERS = 12
+"""Layers to offload when a profile allows the GPU.
+
+Measured on a 4GB GTX 1650 SUPER with ~2.2GB free: 8 layers 1.27x,
+**12 layers 1.54x**, 16 layers 1.37x, 20+ slower than CPU. Past the sweet spot
+the card runs out of room and the spilling costs more than the offload saves.
+
+12 is also where the output stopped matching the CPU run. CUDA and CPU kernels
+round differently, and with enough layers on the GPU that flips a token now and
+then -- not worse, but not identical either, so the default stays at the last
+setting measured to agree.
+"""
+
+VRAM_HEADROOM_MB = 400
+"""Left free for whatever else is on screen. The desktop alone holds several
+hundred megabytes, and taking the last of it stalls the display."""
+
+LAYER_COST_MB = 165
+"""Rough VRAM per offloaded layer for a 7B Q4_K_M, from the measurements
+above (12 layers ≈ 2.0GB)."""
 
 
 def get_profile(name: str) -> Profile:
@@ -92,6 +122,38 @@ def threads_for(profile_name: str) -> int:
     """
     profile = get_profile(profile_name)
     return max(1, round(physical_cores() * profile.thread_fraction))
+
+
+def gpu_layers_for(profile_name: str, requested: int = -1) -> int:
+    """How many layers to offload under a profile.
+
+    `requested` of -1 means decide from free VRAM; a non-negative value is an
+    explicit override. Either way a profile with `gpu=False` gets 0 -- that is
+    the switch that hands the card back to a game.
+
+    Sized against *free* VRAM rather than total, because the card is shared
+    with whatever is already on screen and that changes minute to minute.
+    """
+    profile = get_profile(profile_name)
+    if not profile.gpu:
+        return 0
+
+    from .cuda import available, free_vram_mb
+
+    if not available():
+        # CPU-only build, or no usable driver. Not an error -- just no GPU.
+        return 0
+
+    if requested >= 0:
+        return requested
+
+    free = free_vram_mb()
+    if free < 0:
+        # Cannot measure; the measured-good default is safer than guessing high.
+        return MAX_GPU_LAYERS
+
+    affordable = int((free - VRAM_HEADROOM_MB) / LAYER_COST_MB)
+    return max(0, min(MAX_GPU_LAYERS, affordable))
 
 
 def apply_priority(profile_name: str) -> str:
@@ -143,6 +205,8 @@ def describe() -> list[dict]:
         {
             "name": p.name,
             "threads": threads_for(p.name),
+            "gpu": p.gpu,
+            "gpu_layers": gpu_layers_for(p.name),
             "description": p.description,
         }
         for p in _PROFILES.values()

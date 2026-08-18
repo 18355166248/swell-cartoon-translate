@@ -39,6 +39,15 @@ export interface JobPageResult {
   reused: boolean;
 }
 
+/** A CPU/GPU budget for a run. Only `performance` may touch the GPU. */
+export interface RuntimeProfile {
+  name: string;
+  threads: number;
+  gpu: boolean;
+  gpu_layers: number;
+  description: string;
+}
+
 export interface SkippedFile {
   path: string;
   reason: string;
@@ -78,44 +87,6 @@ export interface JobRequest {
   overrides?: Record<string, unknown>;
 }
 
-export interface Candidate {
-  path: string;
-  name: string;
-  parent: string;
-  width: number;
-  height: number;
-  size: number;
-  reason: string;
-}
-
-export interface PreviewResponse {
-  summary: {
-    total: number;
-    included: number;
-    skipped: number;
-    reasons: Record<string, number>;
-    folders: { path: string; count: number }[];
-    estimated_seconds: number;
-  };
-  included: Candidate[];
-  skipped: Candidate[];
-}
-
-export interface BrowseEntry {
-  name: string;
-  path: string;
-  images: number;
-  nested_images: number;
-}
-
-export interface BrowseResponse {
-  path: string;
-  parent: string | null;
-  images: number;
-  nested_images: number;
-  entries: BrowseEntry[];
-}
-
 export interface PreviewCandidate {
   path: string;
   name: string;
@@ -137,6 +108,21 @@ export interface PreviewResponse {
   };
   included: PreviewCandidate[];
   skipped: PreviewCandidate[];
+}
+
+export interface BrowseEntry {
+  name: string;
+  path: string;
+  images: number;
+  nested_images: number;
+}
+
+export interface BrowseResponse {
+  path: string;
+  parent: string | null;
+  images: number;
+  nested_images: number;
+  entries: BrowseEntry[];
 }
 
 export interface Block {
@@ -248,9 +234,7 @@ export const api = {
     `/api/thumbnail?path=${encodeURIComponent(path)}&size=${size}`,
 
   runtimeProfiles: () =>
-    request<{ cores: number; profiles: { name: string; threads: number; description: string }[] }>(
-      "/api/runtime/profiles",
-    ),
+    request<{ cores: number; profiles: RuntimeProfile[] }>("/api/runtime/profiles"),
 };
 
 export { ApiError };

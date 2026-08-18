@@ -101,6 +101,13 @@ class LlamaCppTranslator:
     def _ensure_loaded(self):
         if self._llm is not None:
             return self._llm
+
+        # Must run before llama_cpp is imported: the CUDA build fails at import
+        # time without its runtime on the DLL path. No-op on the CPU build.
+        from ..cuda import prepare
+
+        prepare()
+
         try:
             from llama_cpp import Llama
         except ImportError as exc:

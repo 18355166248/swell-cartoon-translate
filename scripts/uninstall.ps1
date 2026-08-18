@@ -29,11 +29,48 @@ param(
     # leaving detection, OCR and the rest of the pipeline working. This is the
     # "try it, back it out if it disappoints" path -- it reclaims the ~4.4GB
     # model without undoing the parts that are already verified good.
-    [switch]$LlmOnly
+    [switch]$LlmOnly,
+
+    # Drop GPU support and go back to the CPU build of llama-cpp-python.
+    # Frees ~1.9GB of disk (the CUDA runtime is 0.97GB and the CUDA-enabled
+    # wheel another 0.89GB). Translation keeps working -- just at CPU speed,
+    # which is what the balanced/background profiles use anyway.
+    [switch]$CpuOnly
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+
+# ------------------------------------------------------------------- CUDA ---
+if ($CpuOnly) {
+    Write-Host "`n=== 退回 CPU 版 llama-cpp-python ===" -ForegroundColor Cyan
+
+    $manifest = "$PSScriptRoot\cuda-added-packages.txt"
+    if (Test-Path $manifest) {
+        $packages = Get-Content $manifest | ForEach-Object { ($_ -split '==')[0] } |
+                    Where-Object { $_ }
+        if ($packages) {
+            Write-Host "  卸载 CUDA 运行时: $($packages -join ', ')"
+            if ($PSCmdlet.ShouldProcess("$($packages.Count) 个 CUDA 包", "uninstall")) {
+                python -m pip uninstall -y @packages
+            }
+        }
+    } else {
+        Write-Warning "  找不到 $manifest，跳过 CUDA 运行时卸载"
+    }
+
+    # Reinstalled rather than uninstalled: the CUDA wheel replaced the CPU one
+    # in place, so removing it would leave no translator at all.
+    Write-Host "  重装 CPU 版 llama-cpp-python..."
+    if ($PSCmdlet.ShouldProcess("llama-cpp-python", "reinstall CPU build")) {
+        python -m pip install --force-reinstall --no-deps llama-cpp-python `
+            --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+    }
+
+    Write-Host "`nGPU 支持已移除，翻译仍可用（纯 CPU）。" -ForegroundColor Green
+    Write-Host "记得把 ctt.toml 的 [runtime] profile 改回 balanced 或 background。" -ForegroundColor Yellow
+    return
+}
 
 function Get-DirSizeMB($path) {
     if (-not (Test-Path $path)) { return 0 }

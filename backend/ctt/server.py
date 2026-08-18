@@ -392,14 +392,17 @@ def create_job(body: JobRequest) -> dict:
         from .ocr import build_router
         from .translate import Glossary, build_chain
 
-        from .runtime import threads_for
+        from .runtime import gpu_layers_for, threads_for
 
         glossary = Glossary(config.glossary)
-        # The profile decides how many cores the translator may use. Set here
-        # rather than in ctt.toml so switching profile takes effect without
-        # anyone having to know what n_threads should be.
+        # The profile decides both the core count and whether the GPU is used.
+        # Set here rather than in ctt.toml so switching profile takes effect
+        # without anyone having to know what n_threads or n_gpu_layers should be.
         llamacpp_kwargs = dataclass_kwargs(config.translate.llamacpp)
         llamacpp_kwargs["n_threads"] = threads_for(config.runtime.profile)
+        llamacpp_kwargs["n_gpu_layers"] = gpu_layers_for(
+            config.runtime.profile, config.runtime.gpu_layers
+        )
 
         return Pipeline(
             detector=ComicDetector(variant=config.detect.model,

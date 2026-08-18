@@ -18,6 +18,7 @@ import {
 } from "@/state/atoms";
 import { Switch } from "@/components/ui/switch";
 import { FolderPicker } from "@/components/FolderPicker";
+import { ProfileSwitch } from "@/components/ProfileSwitch";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -282,6 +283,8 @@ export function RunPage() {
           </div>
 
           <Separator />
+
+          <ProfileSwitch />
 
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
