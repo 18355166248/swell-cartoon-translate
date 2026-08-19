@@ -385,3 +385,82 @@ class TestRelease:
         job = manager.submit(["x.jpg"], str(tmp_path / "out"), explode)
         assert wait_until(lambda: job.status == "failed")
         assert "no models" in job.error
+
+
+class TestEtaWithCachedPages:
+    """A resumed run must not be estimated from its cached pages.
+
+    Measured on a real resume before this was fixed: 269 of 881 done, 155 of
+    them cached, reported "2.9 hours left" when the true figure was 6.9 -- and
+    the number climbed the whole time as the run left the cached region.
+    """
+
+    def _job_with(self, total, results):
+        from ctt.jobs import Job, PageResultSummary
+
+        job = Job(id="x", input_paths=[f"p{i}.jpg" for i in range(total)], output_dir="out")
+        job.started_at = 0.0
+        job.results = [
+            PageResultSummary(index=i, name="", source_path="", output_path="",
+                              bubbles=0, review_count=0, seconds=sec, reused=reused)
+            for i, (sec, reused) in enumerate(results)
+        ]
+        return job
+
+    def test_cached_pages_do_not_drag_the_rate_down(self):
+        # 10 cached + 5 real at 40s. The rate must be 40s, not 13.3s.
+        job = self._job_with(100, [(0.0, True)] * 10 + [(40.0, False)] * 5)
+        job.precached = 10
+        # 100 total - 10 cached - 5 translated = 85 left, at 40s each.
+        assert job.eta == pytest.approx(85 * 40.0)
+
+    def test_estimate_is_stable_as_the_run_progresses(self):
+        # The symptom was a number that kept climbing. With the rate taken from
+        # real work only, more samples must not move it.
+        early = self._job_with(100, [(0.0, True)] * 10 + [(40.0, False)] * 2)
+        early.precached = 10
+        later = self._job_with(100, [(0.0, True)] * 10 + [(40.0, False)] * 20)
+        later.precached = 10
+        per_page_early = early.eta / (100 - 10 - 2)
+        per_page_later = later.eta / (100 - 10 - 20)
+        assert per_page_early == pytest.approx(per_page_later)
+
+    def test_no_estimate_before_any_real_page(self):
+        # Cached pages say nothing about how long translation takes.
+        job = self._job_with(100, [(0.0, True)] * 20)
+        job.precached = 20
+        assert job.eta is None
+
+    def test_zero_when_only_cached_pages_remain(self):
+        job = self._job_with(10, [(0.0, True)] * 5 + [(40.0, False)] * 5)
+        job.precached = 5
+        assert job.eta == 0.0
+
+    def test_a_fresh_run_is_unaffected(self):
+        job = self._job_with(100, [(40.0, False)] * 10)
+        job.precached = 0
+        assert job.eta == pytest.approx(90 * 40.0)
+
+    def test_translated_counts_only_real_work(self):
+        job = self._job_with(100, [(0.0, True)] * 7 + [(40.0, False)] * 3)
+        assert job.translated == 3
+
+    def test_precached_is_counted_before_the_first_page(self, tmp_path):
+        # Otherwise the remaining-work figure is wrong until the run happens
+        # to reach the cached region.
+        root = tmp_path / "ch1"
+        root.mkdir()
+        for i in range(4):
+            (root / f"p{i}.jpg").write_bytes(b"x")
+        out = tmp_path / "out"
+        pages = [str(root / f"p{i}.jpg") for i in range(4)]
+
+        manager = JobManager()
+        first = manager.submit(pages, str(out), lambda: FakePipeline(),
+                               input_root=str(root), layout="mirror")
+        assert wait_until(lambda: first.status == "done")
+
+        second = manager.submit(pages, str(out), lambda: FakePipeline(),
+                                input_root=str(root), layout="mirror")
+        assert wait_until(lambda: second.status == "done")
+        assert second.precached == 4

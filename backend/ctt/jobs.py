@@ -96,17 +96,46 @@ class Job:
         end = self.finished_at or time.time()
         return end - self.started_at if self.started_at else 0.0
 
+    precached: int = 0
+    """Pages whose output already existed when the job started.
+
+    Counted up front so the estimate can exclude them. They finish in
+    microseconds, and mixing them into the average is what made the ETA climb.
+    """
+
+    @property
+    def translated(self) -> int:
+        """Pages this run actually put through the pipeline."""
+        return sum(1 for r in self.results if not r.reused)
+
     @property
     def eta(self) -> float | None:
-        """Seconds remaining, from the average of pages actually completed.
+        """Seconds remaining, from the rate of *real* work only.
 
-        None until a page finishes: extrapolating from zero samples produces a
-        confident-looking number that is pure invention.
+        Averaging over every completed page is wrong whenever a run resumes:
+        cached pages complete instantly, so early on the average is near zero
+        and the estimate is wildly optimistic -- then climbs for hours as the
+        run leaves the cached region. Measured on a real resume: 269 pages
+        done of which 155 were cached gave "2.9 hours left" against a true
+        6.9 hours.
+
+        So: rate comes from pages actually translated, and the remaining count
+        excludes the cached pages still ahead.
         """
-        done = len(self.results)
-        if done == 0 or done >= self.total:
+        translated = self.translated
+        if translated == 0:
+            # No sample of real work yet. A number here would be invention --
+            # the cached pages say nothing about how long translation takes.
             return None
-        return (self.elapsed / done) * (self.total - done)
+
+        seconds = sum(r.seconds for r in self.results if not r.reused)
+        if seconds <= 0:
+            return None
+
+        remaining = (self.total - self.precached) - translated
+        if remaining <= 0:
+            return 0.0
+        return (seconds / translated) * remaining
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -130,6 +159,8 @@ class Job:
             "layout": self.layout,
             "copied": self.copied,
             "reused": self.reused,
+            "precached": self.precached,
+            "translated": self.translated,
             "skipped_files": [
                 {"path": s.path, "reason": s.reason, "copied_to": s.copied_to}
                 for s in self.skipped[:200]
@@ -280,6 +311,19 @@ class JobManager:
                     previous = {p.image_path: p for p in prior.pages}
                 except Exception:  # noqa: BLE001 - a corrupt file just means no reuse
                     log.warning("could not read %s; starting fresh", project_file)
+
+            # Count the cached pages before starting. The ETA needs to know how
+            # much real work is left, and discovering that page by page is what
+            # made the estimate climb for hours on a resumed run.
+            if not job.overwrite:
+                job.precached = sum(
+                    1 for source in job.input_paths
+                    if destination_for(Path(source), input_root, output, job.layout).exists()
+                )
+                if job.precached:
+                    job.log_lines.append(
+                        _stamp(f"{job.precached} 张已有成品，本次会跳过")
+                    )
 
             # Copy filtered-out pages first: they need to be in place whether
             # or not the translation stage gets that far.

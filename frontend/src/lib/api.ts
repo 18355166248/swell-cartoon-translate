@@ -48,6 +48,21 @@ export interface RuntimeProfile {
   description: string;
 }
 
+/** Machine state behind the profile picker.
+ *
+ * `cuda_available` is reported separately from each profile's `gpu_layers`
+ * because the layer count is sized from *free* VRAM: a job that is using the
+ * GPU drives it to 0, and reading that as "no GPU" would warn precisely when
+ * the card is working.
+ */
+export interface RuntimeInfo {
+  cores: number;
+  profiles: RuntimeProfile[];
+  cuda_available: boolean;
+  free_vram_mb: number;
+  job_running: boolean;
+}
+
 export interface SkippedFile {
   path: string;
   reason: string;
@@ -62,6 +77,10 @@ export interface Job {
   completed: number;
   /** Pages whose output already existed and were left alone. */
   reused: number;
+  /** Cached pages counted up front, so the estimate can exclude them. */
+  precached: number;
+  /** Pages this run actually put through the pipeline. */
+  translated: number;
   /** Filtered-out pages copied through unchanged. */
   copied: number;
   layout: string;
@@ -233,8 +252,7 @@ export const api = {
   thumbnailUrl: (path: string, size = 240) =>
     `/api/thumbnail?path=${encodeURIComponent(path)}&size=${size}`,
 
-  runtimeProfiles: () =>
-    request<{ cores: number; profiles: RuntimeProfile[] }>("/api/runtime/profiles"),
+  runtimeProfiles: () => request<RuntimeInfo>("/api/runtime/profiles"),
 };
 
 export { ApiError };

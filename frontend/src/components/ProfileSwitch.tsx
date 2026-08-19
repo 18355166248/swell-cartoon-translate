@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Cpu, Gamepad2, Zap, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { api, type RuntimeProfile } from "@/lib/api";
+import { api, type RuntimeInfo } from "@/lib/api";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -28,17 +28,15 @@ const ICONS: Record<string, typeof Cpu> = {
  * hours?" -- not a preference you set once.
  */
 export function ProfileSwitch() {
-  const [profiles, setProfiles] = useState<RuntimeProfile[]>([]);
+  const [info, setInfo] = useState<RuntimeInfo | null>(null);
   const [current, setCurrent] = useState("");
-  const [cores, setCores] = useState(0);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     void (async () => {
       try {
         const [list, config] = await Promise.all([api.runtimeProfiles(), api.getConfig()]);
-        setProfiles(list.profiles);
-        setCores(list.cores);
+        setInfo(list);
         const field = config.fields.find((f) => f.path === "runtime.profile");
         setCurrent(String(field?.value ?? "balanced"));
       } catch {
@@ -55,7 +53,7 @@ export function ProfileSwitch() {
       await api.putConfig({ "runtime.profile": name });
       // Re-fetch: the layer count is computed from *free* VRAM, so it depends
       // on what else is running right now, not just on the profile.
-      setProfiles((await api.runtimeProfiles()).profiles);
+      setInfo(await api.runtimeProfiles());
     } catch (e) {
       setCurrent(previous);
       toast.error("切换失败", { description: e instanceof Error ? e.message : String(e) });
@@ -64,6 +62,7 @@ export function ProfileSwitch() {
     }
   };
 
+  const profiles = info?.profiles ?? [];
   const active = profiles.find((p) => p.name === current);
   const Icon = ICONS[current] ?? Cpu;
 
@@ -92,7 +91,7 @@ export function ProfileSwitch() {
         {active && (
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant="outline" className="font-normal">
-              {active.threads}/{cores} 核
+              {active.threads}/{info?.cores ?? 0} 核
             </Badge>
             <Badge variant={active.gpu ? "default" : "outline"} className="font-normal">
               {active.gpu && active.gpu_layers > 0
@@ -107,9 +106,22 @@ export function ProfileSwitch() {
         <p className="text-muted-foreground text-xs">{active.description}</p>
       )}
 
-      {active?.gpu && active.gpu_layers === 0 && (
+      {/* The layer count is sized from *free* VRAM, so a job that is using the
+          GPU drives it to zero. Reading that as "no GPU" warned exactly when
+          the card was working -- hence the split between "CUDA is missing",
+          which is a real problem, and "the card is busy with our own run",
+          which is not. */}
+      {active?.gpu && info && !info.cuda_available && (
         <p className="text-warning text-xs">
-          选了 GPU 档但显存不够（或装的是 CPU 版 llama-cpp-python），本次仍走纯 CPU。
+          选了 GPU 档，但当前装的是 CPU 版 llama-cpp-python，本次仍走纯 CPU。
+          安装方法见 README「GPU 卸载」。
+        </p>
+      )}
+      {active?.gpu && info?.cuda_available && active.gpu_layers === 0 && (
+        <p className="text-muted-foreground text-xs">
+          {info.job_running
+            ? "显存正被当前任务占用，这是正常的——任务结束就会释放。"
+            : `空闲显存只剩 ${info.free_vram_mb} MB，不够卸载，本次走纯 CPU。关掉占显存的程序再试。`}
         </p>
       )}
     </div>

@@ -493,10 +493,24 @@ def thumbnail(path: str, size: int = 240) -> Response:
 
 @app.get("/api/runtime/profiles")
 def runtime_profiles() -> dict:
-    """Available CPU profiles, with the thread count each would use."""
+    """Available CPU/GPU profiles and what each would use right now.
+
+    `cuda_available` is reported separately from the layer counts on purpose.
+    Layers are sized from *free* VRAM, so a running job pushes them to 0 --
+    and a UI that reads that as "no GPU" tells you the card is unusable at the
+    exact moment it is being used.
+    """
+    from .cuda import available, free_vram_mb
+    from .jobs import MANAGER
     from .runtime import describe, physical_cores
 
-    return {"cores": physical_cores(), "profiles": describe()}
+    return {
+        "cores": physical_cores(),
+        "profiles": describe(),
+        "cuda_available": available(),
+        "free_vram_mb": free_vram_mb(),
+        "job_running": MANAGER.busy,
+    }
 
 
 @app.get("/api/jobs")

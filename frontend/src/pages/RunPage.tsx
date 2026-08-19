@@ -380,7 +380,13 @@ export function RunPage() {
                     {formatFinishTime(job.eta)}
                   </p>
                   <p className="text-muted-foreground mt-0.5 text-xs">
-                    还需约 {formatDuration(job.eta)}，按已完成 {job.completed} 张的平均速度推算
+                    还需约 {formatDuration(job.eta)}，按真正翻译过的{" "}
+                    {job.translated} 张平均速度推算
+                    {job.precached > 0 && (
+                      <>
+                        ；另有 {job.precached} 张已有成品，不计入
+                      </>
+                    )}
                   </p>
                 </div>
               )}
