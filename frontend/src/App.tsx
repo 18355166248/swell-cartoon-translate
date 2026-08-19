@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from "react";
 import { useAtom } from "jotai";
-import { Settings, Play, Images, Circle } from "lucide-react";
+import { Settings, Play, Images, Circle, Type } from "lucide-react";
 import { activeTabAtom, backendOnlineAtom, projectPathAtom } from "@/state/atoms";
 import { useJobPolling } from "@/hooks/useJobPolling";
 import { Toaster } from "@/components/ui/sonner";
@@ -11,6 +11,7 @@ import { api } from "@/lib/api";
 import { ConfigPage } from "@/pages/ConfigPage";
 import { RunPage } from "@/pages/RunPage";
 import { ResultsPage } from "@/pages/ResultsPage";
+import { TypesetPage } from "@/pages/TypesetPage";
 
 /** Scroll container for the document-like tabs. */
 function Scrollable({ children }: { children: React.ReactNode }) {
@@ -82,6 +83,7 @@ export default function App() {
             <TabsList>
               <TabsTrigger value="run"><Play className="mr-1.5 size-3.5" />翻译</TabsTrigger>
               <TabsTrigger value="results"><Images className="mr-1.5 size-3.5" />结果</TabsTrigger>
+              <TabsTrigger value="typeset"><Type className="mr-1.5 size-3.5" />排版</TabsTrigger>
               <TabsTrigger value="config"><Settings className="mr-1.5 size-3.5" />配置</TabsTrigger>
             </TabsList>
           </div>
@@ -109,6 +111,11 @@ export default function App() {
             </TabsContent>
             <TabsContent value="results" className="h-full">
               <ResultsPage projectPath={projectPath} />
+            </TabsContent>
+            <TabsContent value="typeset" className="h-full">
+              <Scrollable>
+                <TypesetPage />
+              </Scrollable>
             </TabsContent>
             <TabsContent value="config" className="h-full">
               <Scrollable>

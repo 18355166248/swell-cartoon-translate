@@ -19,7 +19,9 @@ export default defineConfig({
     // origin in dev and needs no CORS handling of its own.
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8000",
+        // Overridable so a second backend can be run alongside a long job
+        // rather than restarting the one that is midway through a chapter.
+        target: process.env.CTT_API ?? "http://127.0.0.1:8000",
         changeOrigin: true,
       },
     },

@@ -169,6 +169,40 @@ export interface Project {
   pages: Page[];
 }
 
+/** One previewed balloon. The numbers matter as much as the picture: the
+ *  fitted size and the overflow flag are what these settings actually
+ *  control, and neither can be read off an image reliably. */
+export interface TypesetFact {
+  label: string;
+  text: string;
+  size: number;
+  lines: number;
+  overflow: boolean;
+}
+
+/** Everything under `[typeset]` that changes how text is drawn.
+ *  Any field left out falls back to what is saved in ctt.toml. */
+export interface TypesetSettings {
+  font?: string;
+  line_spacing?: number;
+  align?: string;
+  min_size?: number;
+  bubble_inset?: number;
+}
+
+export interface TypesetPreview {
+  /** Object URL for the rendered strip. Revoke it when replacing. */
+  url: string;
+  facts: TypesetFact[];
+}
+
+export interface FontEntry {
+  name: string;
+  available: boolean;
+  file: string | null;
+  variation: string | null;
+}
+
 class ApiError extends Error {
   // Declared and assigned explicitly rather than as a constructor parameter
   // property: the Vite template enables `erasableSyntaxOnly`, which rejects
@@ -253,6 +287,30 @@ export const api = {
     `/api/thumbnail?path=${encodeURIComponent(path)}&size=${size}`,
 
   runtimeProfiles: () => request<RuntimeInfo>("/api/runtime/profiles"),
+
+  typesetFonts: () => request<{ fonts: FontEntry[]; default: string }>("/api/typeset/fonts"),
+
+  /** Renders sample balloons through the real layout engine.
+   *
+   *  Not a `request` call: the response is a PNG with the facts in a header,
+   *  so the caller gets both in one round trip -- which is what makes a
+   *  preview that updates as a slider moves affordable. */
+  typesetPreview: async (
+    settings: TypesetSettings & { texts?: string[]; dark?: boolean },
+    signal?: AbortSignal,
+  ): Promise<TypesetPreview> => {
+    const response = await fetch("/api/typeset/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+      signal,
+    });
+    if (!response.ok) throw new ApiError(`${response.status} ${response.statusText}`, response.status);
+    // ASCII-escaped by the backend, because HTTP headers are latin-1 and
+    // every sample is Chinese. JSON.parse undoes the escaping.
+    const facts = JSON.parse(response.headers.get("X-Typeset-Facts") ?? "[]") as TypesetFact[];
+    return { url: URL.createObjectURL(await response.blob()), facts };
+  },
 };
 
 export { ApiError };

@@ -125,3 +125,72 @@ class TestBrowse:
         f = tmp_path / "a.txt"
         f.write_text("x")
         assert client.get("/api/browse", params={"path": str(f)}).status_code == 400
+
+
+class TestTypesetPreviewApi:
+    """The preview is only useful if it is honest: it must run the real layout
+    engine and report what the settings did, not just return a picture."""
+
+    def facts(self, client, **body):
+        import json
+
+        response = client.post("/api/typeset/preview", json=body)
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"] == "image/png"
+        return json.loads(response.headers["X-Typeset-Facts"])
+
+    def test_renders_with_saved_settings_by_default(self, client):
+        facts = self.facts(client)
+        assert len(facts) == 5
+        assert all(f["size"] > 0 for f in facts)
+
+    def test_facts_header_survives_chinese(self, client):
+        """HTTP headers are latin-1 and every sample here is Chinese, so the
+        JSON has to go out ASCII-escaped."""
+        response = client.post("/api/typeset/preview", json={})
+        header = response.headers["X-Typeset-Facts"]
+        header.encode("latin-1")  # would raise if the escaping regressed
+        assert "住手" in self.facts(client)[0]["text"]
+
+    def test_settings_change_the_result(self, client):
+        base = [f["size"] for f in self.facts(client, bubble_inset=0.05)]
+        tight = [f["size"] for f in self.facts(client, bubble_inset=0.30)]
+        assert tight < base
+
+    def test_min_size_reports_overflow(self, client):
+        """The flag is the whole point of the setting -- it decides which
+        pages land in needs_review."""
+        facts = self.facts(client, min_size=60)
+        assert any(f["overflow"] for f in facts)
+        assert all(f["size"] >= 60 for f in facts)
+
+    def test_custom_texts_are_used(self, client):
+        facts = self.facts(client, texts=["你好世界"])
+        assert [f["text"] for f in facts] == ["你好世界"]
+
+    def test_custom_texts_are_bounded(self, client):
+        """The facts ride in a header, which servers cap at a few KB."""
+        facts = self.facts(client, texts=["很长" * 400] * 40)
+        assert len(facts) <= 8
+        assert all(len(f["text"]) <= 120 for f in facts)
+
+    def test_dimensions_are_clamped(self, client):
+        """An unbounded size would let one request allocate arbitrarily."""
+        facts = self.facts(client, width=99999, height=99999)
+        assert facts  # served rather than exploding
+
+    def test_preview_does_not_leak_into_later_renders(self, client):
+        from ctt.typeset import settings
+
+        before = settings.active()
+        self.facts(client, font="SourceHanSerifSC", min_size=50)
+        assert settings.active() is before
+
+    def test_fonts_report_availability(self, client):
+        """A font name that does not resolve renders every glyph as a box, and
+        the output image is a slow way to discover that."""
+        body = client.get("/api/typeset/fonts").json()
+        names = {f["name"] for f in body["fonts"]}
+        assert body["default"] in names
+        assert any(f["available"] for f in body["fonts"])
+        assert all(f["file"] for f in body["fonts"] if f["available"])

@@ -12,10 +12,14 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { TYPESET_PATHS } from "@/pages/TypesetPage";
 
 /** Key standing in for the top-level (unprefixed) fields.
  *  Must not be "" -- see the grouping code below. */
 const GENERAL = "general";
+
+/** Owned by the 排版 tab -- see the grouping code below. */
+const TYPESET_TAB_FIELDS = new Set(Object.values(TYPESET_PATHS));
 
 /** Friendly names for the dotted config sections. */
 const SECTION_LABELS: Record<string, string> = {
@@ -28,7 +32,7 @@ const SECTION_LABELS: Record<string, string> = {
   "translate.llamacpp": "翻译 · 本地 LLM",
   "translate.llm": "翻译 · 远程 OpenAI 兼容",
   "translate.nllb": "翻译 · NLLB（成人素材不适用）",
-  typeset: "排版",
+  typeset: "排版 · 其余",
   erase: "擦除",
 };
 
@@ -121,6 +125,12 @@ export function ConfigPage() {
     if (!config) return [];
     const grouped = new Map<string, ConfigField[]>();
     for (const field of config.fields) {
+      // Skip only what the 排版 tab owns, where these are edited beside a
+      // live render -- two controls for one setting, one of them blind, is
+      // worse than one. The rest of `[typeset]` stays here: `free_text_inset`
+      // applies to text outside balloons, which the preview does not draw, so
+      // a slider for it would sit next to a picture that never moves.
+      if (TYPESET_TAB_FIELDS.has(field.path)) continue;
       // Top-level fields have an empty section. Radix Accordion treats an
       // empty string as "no item", so that panel silently refused to open --
       // give it a real key instead.

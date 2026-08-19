@@ -32,7 +32,7 @@ from . import inpaint
 from .translate import Glossary
 from .translate.punctuation import residual_latin, traditional_chars
 from .types import Block, BlockKind, Page, Project
-from .typeset import render_page
+from .typeset import Typeset, render_page, using as using_typeset
 
 log = logging.getLogger(__name__)
 
@@ -133,6 +133,7 @@ class Pipeline:
         glossary: Glossary | None = None,
         lama: inpaint.LamaInpainter | None = None,
         detect_threshold: float = 0.35,
+        typeset: Typeset | None = None,
     ):
         self.detector = detector
         self.ocr = ocr
@@ -142,6 +143,7 @@ class Pipeline:
         self.glossary = glossary or Glossary()
         self.lama = lama
         self.detect_threshold = detect_threshold
+        self.typeset = typeset or Typeset()
 
     def run_page(
         self,
@@ -182,7 +184,8 @@ class Pipeline:
 
         report("typeset")
         with _timed(timings, "typeset"):
-            rendered, overflowed = render_page(erased, translatable)
+            with using_typeset(self.typeset):
+                rendered, overflowed = render_page(erased, translatable)
 
         log.info("erase: %s", erase_stats)
 

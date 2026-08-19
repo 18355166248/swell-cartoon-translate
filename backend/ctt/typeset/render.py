@@ -14,7 +14,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from ..types import Block
-from . import fonts
+from . import fonts, settings
 from .layout import (
     EllipseProfile,
     LayoutResult,
@@ -23,25 +23,6 @@ from .layout import (
     WidthProfile,
     fit,
 )
-
-BUBBLE_INSET = 0.10
-"""Margin for the *ellipse* path, as a fraction of the box's smaller side.
-
-Detector boxes hug the balloon outline, and text set flush against a drawn
-border reads as cramped. A tenth is roughly what hand-typesetters leave.
-"""
-
-POLYGON_INSET = 0.05
-"""Margin for the *polygon* path.
-
-Half the ellipse figure, because the two paths are not comparable. The ellipse
-path insets the bounding box and then inscribes an ellipse inside it, so it is
-already conservative twice over; the polygon is the balloon's true boundary
-and an erosion off it is the only margin applied. Reusing the ellipse figure
-here shrinks the usable region enough to drop the fitted size by a third.
-"""
-
-FREE_TEXT_INSET = 0.02
 
 
 def polygon_row_spans(
@@ -101,7 +82,7 @@ def profile_for_block(block: Block) -> WidthProfile:
         xs = [p[0] for p in polygon]
         ys = [p[1] for p in polygon]
         top, bottom = int(min(ys)), int(max(ys))
-        inset = min(max(xs) - min(xs), bottom - top) * POLYGON_INSET
+        inset = min(max(xs) - min(xs), bottom - top) * settings.active().polygon_inset
         return PolygonProfile(
             row_spans=polygon_row_spans(polygon, top, bottom, inset=inset),
             top=float(top),
@@ -110,7 +91,7 @@ def profile_for_block(block: Block) -> WidthProfile:
 
     box = block.layout_box.translated(dx, dy)
     if block.bubble_box is not None:
-        inset = min(box.width, box.height) * BUBBLE_INSET
+        inset = min(box.width, box.height) * settings.active().bubble_inset
         return EllipseProfile(
             left=box.x1 + inset,
             right=box.x2 - inset,
@@ -118,7 +99,7 @@ def profile_for_block(block: Block) -> WidthProfile:
             bottom=box.y2 - inset,
         )
 
-    inset = min(box.width, box.height) * FREE_TEXT_INSET
+    inset = min(box.width, box.height) * settings.active().free_text_inset
     return RectProfile(
         left=box.x1 + inset,
         right=box.x2 - inset,
@@ -153,6 +134,7 @@ def layout_block(block: Block) -> LayoutResult:
         font=style.font,
         line_spacing=style.line_spacing,
         align=style.align,
+        min_size=settings.active().min_size,
     )
 
 
@@ -192,6 +174,7 @@ def render_page(image: np.ndarray, blocks: list[Block]) -> tuple[np.ndarray, lis
     for block in blocks:
         if not block.target_text.strip():
             continue
+        settings.apply_style(block)
         result = layout_block(block)
         if result.overflow:
             overflowed.append(block)

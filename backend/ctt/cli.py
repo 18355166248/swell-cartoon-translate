@@ -12,11 +12,15 @@ import logging
 import re
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import cv2
 
 from .config import CONFIG_NAME
 from .translate import Glossary
+
+if TYPE_CHECKING:
+    from .typeset import Typeset
 
 
 def _configure_logging(verbose: bool) -> None:
@@ -62,6 +66,25 @@ def dataclass_kwargs(obj) -> dict:
         for f in dataclasses.fields(obj)
         if getattr(obj, f.name) != ""
     }
+
+
+def typeset_settings(cfg) -> "Typeset":
+    """`[typeset]` config -> the settings object the render path reads.
+
+    A conversion rather than passing the config straight through, so that
+    `ctt.typeset` never imports `ctt.config`: layout is exercised by tests and
+    by the settings preview with values that never came from a file.
+    """
+    from .typeset import Typeset
+
+    return Typeset(
+        font=cfg.font,
+        line_spacing=cfg.line_spacing,
+        align=cfg.align,
+        min_size=cfg.min_size,
+        bubble_inset=cfg.bubble_inset,
+        free_text_inset=cfg.free_text_inset,
+    )
 
 
 def _expand(patterns: list[str], skip_thumbnails: bool = True,
@@ -211,6 +234,7 @@ def cmd_translate(args: argparse.Namespace) -> int:
         glossary=glossary,
         lama=LamaInpainter(config.erase.lama_path) if config.erase.lama_path else None,
         detect_threshold=config.detect.threshold,
+        typeset=typeset_settings(config.typeset),
     )
     if config.source_path:
         print(f"config     : {config.source_path}")

@@ -14,6 +14,7 @@ thrash VRAM against whatever else is resident.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import logging
 from functools import lru_cache
 from pathlib import Path
@@ -28,7 +29,7 @@ from pydantic import BaseModel
 from .config import CONFIG_NAME as CONFIG_FILE
 from .pipeline import Pipeline
 from .types import Block, Page, Project
-from .typeset import layout_block, render_page
+from .typeset import layout_block, render_page, using as using_typeset
 
 log = logging.getLogger(__name__)
 
@@ -154,11 +155,27 @@ def reset_block(index: int, block_id: str) -> Block:
     return block
 
 
+def saved_typeset():
+    """`[typeset]` from ctt.toml, for the editor's own render paths.
+
+    The batch pipeline activates these settings for its typeset stage. The
+    editor endpoints below re-run the same engine, so they have to activate
+    them too -- otherwise a non-default ctt.toml makes the page you re-render
+    (or export) typeset differently from the one the run produced, and the
+    difference is silent.
+    """
+    from .cli import typeset_settings
+    from .config import load
+
+    return typeset_settings(load()[0].typeset)
+
+
 @app.get("/api/pages/{index}/blocks/{block_id}/fit")
 def preview_fit(index: int, block_id: str) -> dict:
     """Lay out one block without rendering -- drives live editor feedback."""
     block = _find_block(_page(index), block_id)
-    result = layout_block(block)
+    with using_typeset(saved_typeset()):
+        result = layout_block(block)
     return {
         "size": result.size,
         "overflow": result.overflow,
@@ -183,7 +200,8 @@ def render(index: int, original: bool = False, quality: int = 85) -> Response:
 
     translatable = [b for b in page.blocks if b.translatable]
     erased, _ = inpaint.erase(image, page.blocks, trace_polygons=False)
-    rendered, _ = render_page(erased, translatable)
+    with using_typeset(saved_typeset()):
+        rendered, _ = render_page(erased, translatable)
     encoded = cv2.imencode(".jpg", rendered, [cv2.IMWRITE_JPEG_QUALITY, quality])[1]
     return Response(encoded.tobytes(), media_type="image/jpeg")
 
@@ -197,7 +215,8 @@ def export_page(index: int, body: ProjectPath) -> dict:
 
     translatable = [b for b in page.blocks if b.translatable]
     erased, _ = inpaint.erase(image, page.blocks, trace_polygons=False)
-    rendered, _ = render_page(erased, translatable)
+    with using_typeset(saved_typeset()):
+        rendered, _ = render_page(erased, translatable)
 
     destination = Path(body.path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -389,7 +408,7 @@ def create_job(body: JobRequest) -> dict:
         raise HTTPException(400, "no images matched")
 
     def build_pipeline():
-        from .cli import dataclass_kwargs
+        from .cli import dataclass_kwargs, typeset_settings
         from .detect import ComicDetector
         from .inpaint import LamaInpainter
         from .ocr import build_router
@@ -423,6 +442,7 @@ def create_job(body: JobRequest) -> dict:
             glossary=glossary,
             lama=LamaInpainter(config.erase.lama_path) if config.erase.lama_path else None,
             detect_threshold=config.detect.threshold,
+            typeset=typeset_settings(config.typeset),
         )
 
     job = MANAGER.submit(
@@ -489,6 +509,106 @@ def thumbnail(path: str, size: int = 240) -> Response:
     body = _thumbnail_bytes(str(target), max(64, min(size, 1024)), target.stat().st_mtime)
     return Response(body, media_type="image/jpeg",
                     headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+class TypesetPreview(BaseModel):
+    """Settings to preview. Absent fields fall back to the saved config, so the
+    UI can send only what the user is currently dragging."""
+
+    font: str | None = None
+    line_spacing: float | None = None
+    align: str | None = None
+    min_size: int | None = None
+    bubble_inset: float | None = None
+    texts: list[str] | None = None
+    width: int = 320
+    height: int = 220
+    dark: bool = False
+
+
+@app.post("/api/typeset/preview")
+def typeset_preview(body: TypesetPreview) -> Response:
+    """Render sample balloons with the given typeset settings.
+
+    Uses the real layout engine, not an approximation: the things being tuned
+    -- searched font size, shape-aware wrapping, Chinese line-break rules --
+    have no CSS equivalent, so a mocked preview would look right while the
+    actual output still overflowed.
+
+    Returns the image with the per-sample facts in a header, because the
+    fitted size and the overflow flag are what the settings really control and
+    they cannot be read off a picture.
+
+    The settings are made active only for this render, and only on this
+    thread (`typeset.using` is backed by a ContextVar), so dragging a slider
+    while a job runs cannot retypeset one of its pages with unsaved values.
+    """
+    import json
+
+    from .typeset import preview as preview_mod
+
+    saved = saved_typeset()
+    # Absent fields fall back to what is saved, so the UI can send only the
+    # control the user is currently dragging.
+    previewed = dataclasses.replace(saved, **{
+        key: value
+        for key, value in {
+            "font": body.font,
+            "line_spacing": body.line_spacing,
+            "align": body.align,
+            "min_size": body.min_size,
+            "bubble_inset": body.bubble_inset,
+        }.items()
+        if value is not None
+    })
+
+    texts = ([(f"{i + 1}", t[:120]) for i, t in enumerate(body.texts[:8])]
+             if body.texts else None)
+    strip, facts = preview_mod.render_samples(
+        previewed,
+        width=max(120, min(body.width, 800)),
+        height=max(100, min(body.height, 800)),
+        texts=texts,
+        dark=body.dark,
+    )
+
+    encoded = cv2.imencode(".png", strip)[1].tobytes()
+    return Response(
+        encoded,
+        media_type="image/png",
+        headers={
+            # ASCII-escaped deliberately: HTTP headers are latin-1, and the
+            # sample labels and texts are Chinese. JSON.parse decodes the
+            # escapes back on the other side.
+            "X-Typeset-Facts": json.dumps(facts, ensure_ascii=True),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/api/typeset/fonts")
+def typeset_fonts() -> dict:
+    """Configured font names, and whether each actually resolves on this box.
+
+    A name that does not resolve renders every glyph as a box, and finding that
+    out from the output image is a slow way to learn it.
+    """
+    from .typeset import fonts as font_mod
+
+    entries = []
+    for name in font_mod.FONT_CANDIDATES:
+        try:
+            path, variation = font_mod.resolve(name)
+            entries.append({
+                "name": name,
+                "available": True,
+                "file": path.name,
+                "variation": variation,
+            })
+        except FileNotFoundError:
+            entries.append({"name": name, "available": False, "file": None,
+                            "variation": None})
+    return {"fonts": entries, "default": font_mod.DEFAULT_FONT}
 
 
 @app.get("/api/runtime/profiles")

@@ -38,7 +38,7 @@ models_dir = ""
 #
 # 内存和档位无关：实测 n_ctx 从 512 到 4096，常驻内存只从 6383MB 变到 6594MB，
 # 那 6.4GB 基本全是模型权重。想少占内存只能换更小的模型。
-profile = "performance"
+profile = "background"
 
 # GPU 卸载层数，-1 = 按空闲显存自动决定（上限 12）。
 # 只有 performance 档会用 GPU，其余档位强制为 0——这就是玩游戏时的开关。
@@ -163,13 +163,20 @@ batch_size = 16
 device = ""         # 留空自动选；填 "cpu" 强制不占显存
 
 
+# 这一节别手改，界面上有「排版」标签页：同样这几个值，旁边实时渲染样例气泡，
+# 用真正的排版引擎跑，所见即成品。字号是搜出来的、断行是按气泡形状算的，
+# 光看数字判断不了效果。
+#
+# 注意：这一节以前是空转的——插图边距是模块常量，min_size 是函数默认参数，
+# 文字块拿的是 TextStyle 的默认值。默认值恰好和这里写的一样，所以看不出来。
+# 现在真正生效了，改这里会改变成品。
 [typeset]
-font = "SourceHanSansSC"    # 见 typeset/fonts.py 的候选列表
+font = "SourceHanSansSC"    # 见 typeset/fonts.py 的候选列表。界面上会标出本机缺哪个
 line_spacing = 1.15
 align = "center"
-min_size = 9                # 小于这个字号就判定为溢出，标记进 needs_review
-bubble_inset = 0.10         # 气泡内边距，占短边比例。手工排版大约留这么多
-free_text_inset = 0.02      # 无气泡的自由文字用更小的边距
+min_size = 9                # 缩到这个字号仍放不下就不再缩，改为标记进 needs_review
+bubble_inset = 0.1          # 气泡内边距，占短边比例。手工排版大约留这么多
+free_text_inset = 0.02      # 无气泡的自由文字用更小的边距。预览只画气泡，看不到它
 
 
 [erase]
